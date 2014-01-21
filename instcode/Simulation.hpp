@@ -352,6 +352,7 @@ class CacheStructureHandler : public MemoryStreamHandler {
 public:
     uint32_t sysId;
     uint32_t levelCount;
+    uint32_t HybridCache;
 
     CacheLevel** levels;
     string description;
@@ -369,5 +370,24 @@ public:
     bool Verify();
 };
 
+class CacheHybridStructureHandler : public CacheStructureHandler {
+
+protected: 
+      uint64_t hits;
+      uint64_t misses;
+      uint64_t AddressRangesCount;
+public:
+    //vector<uint32_t> RamAddressStart;     //vector<uint32_t> RamAddressEnd; // CAUTION: Should be uint64_t 
+    uint32_t* RamAddressStart;
+    uint32_t* RamAddressEnd;
+
+    uint64_t GetHits(){return hits;}
+    uint64_t GetMisses(){ return misses;} 
+    bool CheckRange(uint64_t addr); //, uint32_t* set, uint32_t* lineInSet);	
+    void ExtractAddresses();
+    CacheHybridStructureHandler(CacheHybridStructureHandler& h);
+    void Process(void* stats, BufferEntry* access);
+ 
+};
 
 #endif /* _Simulation_hpp_ */

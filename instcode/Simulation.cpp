@@ -35,6 +35,8 @@
 #include <string.h>
 #include <assert.h>
 
+// AVS: Flow tracing
+fstream HitStatus; 
 
 // Can tinker with this at runtime using the environment variable
 // METASIM_LIMIT_HIGH_ASSOC if desired.
@@ -75,7 +77,7 @@ static set<uint64_t>* NonmaxKeys = NULL;
 // should not be used directly. kept here to be cloned by anyone who needs it
 static MemoryStreamHandler** MemoryHandlers = NULL;
 
-// static ReuseDistance** ReuseDistanceHandlers = NULL;
+static ReuseDistance** ReuseDistanceHandlers = NULL;
 
 
 #define synchronize(__locker) __locker->Lock(); for (bool __s = true; __s == true; __locker->UnLock(), __s = false) 
@@ -230,9 +232,7 @@ extern "C" {
         }
     }
 */
-  //  void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m, ReuseDistance* rd, ReuseDistance* sd, uint32_t numElements, image_key_t iid, thread_key_t tid)
-    void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m,uint32_t numElements, image_key_t iid, thread_key_t tid)
-    {
+    void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m, ReuseDistance* rd, ReuseDistance* sd, uint32_t numElements, image_key_t iid, thread_key_t tid){
         uint32_t threadSeq = AllData->GetThreadSequence(tid);
         uint32_t numProcessed = 0;
 
@@ -252,19 +252,19 @@ extern "C" {
                 debug(assert(AllData->CountThreads() > 1));
                 continue;
             }
-
-            m->Process((void*)ss, reference);
+	    HitStatus<<"\n\t Initiating processing of "<<reference->address;
+	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
 
-//	    ReuseEntry entry = ReuseEntry();
-//	    entry.id = stats->Hashes[stats->BlockIds[reference->memseq]]; // This is to track by BBID to track by memseq change to entry.id=reference->memseq;
-//	    entry.address=reference->address ;
-  //          if(ReuseWindow && HandlerIdx == ReuseHandlerIndex){
-	//    	rd->Process(entry);
-          //  }
-	    //if(SpatialWindow && HandlerIdx == SpatialHandlerIndex){
-	    	// sd->Process(entry);
-           // }
+	    ReuseEntry entry = ReuseEntry();
+	    entry.id = stats->Hashes[stats->BlockIds[reference->memseq]]; // This is to track by BBID to track by memseq change to entry.id=reference->memseq;
+	    entry.address=reference->address ;
+            if(ReuseWindow && HandlerIdx == ReuseHandlerIndex){
+	    	rd->Process(entry);
+            }
+	    if(SpatialWindow && HandlerIdx == SpatialHandlerIndex){
+	    	sd->Process(entry);
+            }
             numProcessed++;
         }
         //assert(faststats[0]->Stats[HandlerIdx]->Verify());
@@ -321,15 +321,15 @@ extern "C" {
             FastStats->Refresh(buffer, numElements, tid);
             for (uint32_t i = 0; i < CountMemoryHandlers; i++){
                 MemoryStreamHandler* m = stats->Handlers[i];
-//		ReuseDistance* rd=NULL;
-//		ReuseDistance* sd;
-//		if(ReuseWindow)
-//	               rd = stats->RHandlers[ReuseHandlerIndex];
-//		if(SpatialWindow)
-//	               sd = stats->RHandlers[SpatialHandlerIndex];
+		ReuseDistance* rd=NULL;
+		ReuseDistance* sd=NULL;
+		if(ReuseWindow)
+ 	               rd = stats->RHandlers[ReuseHandlerIndex];
+		if(SpatialWindow)
+	               sd = stats->RHandlers[SpatialHandlerIndex];
 
-//              ProcessBuffer(i, m, rd, sd, numElements, iid, tid);
-		ProcessBuffer(i, m, numElements, iid, tid);
+                ProcessBuffer(i, m, rd, sd, numElements, iid, tid);
+                HitStatus<<"\t Refresh! \n";
             }
         } 
         }
@@ -412,16 +412,16 @@ extern "C" {
                 }
 
                 // reuse distance handler needs to know that we passed over some addresses
-//                if (ReuseWindow || SpatialWindow){
-//		    if(ReuseWindow) {	
-//                    	ReuseDistance* r = stats->RHandlers[ReuseHandlerIndex];
-//                    	r->SkipAddresses(numElements);
-//		    }
-//		    if(SpatialWindow) {
-//                    	ReuseDistance* s = stats->RHandlers[SpatialHandlerIndex];
-//                    	s->SkipAddresses(numElements);
-//		    }
-//                }
+                if (ReuseWindow || SpatialWindow){
+		    if(ReuseWindow) {	
+                    	ReuseDistance* r = stats->RHandlers[ReuseHandlerIndex];
+                    	r->SkipAddresses(numElements);
+		    }
+		    if(SpatialWindow) {
+                    	ReuseDistance* s = stats->RHandlers[SpatialHandlerIndex];
+                    	s->SkipAddresses(numElements);
+		    }
+                }
             }
 
             Sampler->IncrementAccessCount(numElements);
@@ -487,7 +487,7 @@ extern "C" {
         TryOpen(MemFile, fileName);
 
 
-/*        if (ReuseWindow){
+        if (ReuseWindow){
    
 	    ofstream ReuseDistFile;
             ReuseDistFileName(stats, oFile);
@@ -533,7 +533,7 @@ extern "C" {
             }
             SpatialDistFile.close();
         }
-*/
+
         uint64_t sampledCount = 0;
         uint64_t totalMemop = 0;
         for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
@@ -681,6 +681,11 @@ extern "C" {
                     }
                 }
 
+		uint32_t* HybridCacheStatus=(uint32_t*)malloc( CountCacheStructures * sizeof(uint32_t) );
+		for (uint32_t sys = 0; sys < CountCacheStructures; sys++){
+			CacheStructureHandler* CheckHybridStructure= (CacheStructureHandler*)stats->Handlers[sys];
+			HybridCacheStatus[sys]=CheckHybridStructure->HybridCache;
+		}
                 CacheStats* root = aggstats[0];
                 for (uint32_t bbid = 0; bbid < root->Capacity; bbid++){
 
@@ -732,6 +737,13 @@ extern "C" {
                               << TAB << dec << c->GetMisses(bbid, lvl)
                               << ENDL;
                         }
+                           
+                           if(HybridCacheStatus[sys])
+                           {
+                           	CacheHybridStructureHandler* CHSH=(CacheHybridStructureHandler*)stats->Handlers[sys] ;
+                           	MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<ENDL;
+                           }
+                         
                     }
                 }
 
@@ -748,7 +760,7 @@ extern "C" {
         inform << "CXXX Total Execution time for instrumented application: " << t << ENDL;
         double m = (double)(CountCacheStructures * Sampler->AccessCount);
         inform << "CXXX Memops simulated (includes only sampled memops in cache structures) per second: " << (m/t) << ENDL;
-
+	HitStatus.close();
         if (NonmaxKeys){
             delete NonmaxKeys;
         }
@@ -1457,6 +1469,7 @@ uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, ui
 }
 
 uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
+    HitStatus<<"\n\t Orders to replace set: "<<setid<<" line: "<<lineid<<" with "<<store;
     uint64_t prev = contents[setid][lineid];
     contents[setid][lineid] = store;
     MarkUsed(setid, lineid);
@@ -1502,6 +1515,7 @@ bool HighlyAssociativeCacheLevel::Search(uint64_t store, uint32_t* set, uint32_t
 }
 
 bool CacheLevel::Search(uint64_t store, uint32_t* set, uint32_t* lineInSet){
+    HitStatus<<"\n\t Search going on for "<<store; 
     uint32_t setId = GetSet(store);
     debug(inform << TAB << TAB << "stored " << hex << store << " set " << dec << setId << endl << flush);
     if (set){
@@ -1529,20 +1543,24 @@ bool CacheLevel::MultipleLines(uint64_t addr, uint32_t width){
 uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, void* info){
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = GetStorage(addr);
-
+    	
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
+    HitStatus<<"\n\t 1. Processing: "<<addr;
     // hit
     if (Search(store, &set, &lineInSet)){
+        HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
         stats->Stats[memid][level].hitCount++;
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
 
     // miss
+
     stats->Stats[memid][level].missCount++;
     Replace(store, set, LineToReplace(set));
+    HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
     return level + 1;
 }
 
@@ -1551,7 +1569,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     uint32_t lineInSet = 0;
 
     uint64_t store = GetStorage(addr);
-
+	HitStatus<<"\n\t 2. Processing: "<<addr;
     // handle victimizing
     EvictionInfo* e = (EvictionInfo*)info; 
     if (e->level != INVALID_CACHE_LEVEL){
@@ -1622,13 +1640,15 @@ bool MemoryStreamHandler::UnLock(){
 }
 
 CacheStructureHandler::CacheStructureHandler(){
+
 }
 
 CacheStructureHandler::CacheStructureHandler(CacheStructureHandler& h){
     sysId = h.sysId;
     levelCount = h.levelCount;
     description.assign(h.description);
-
+    
+     HitStatus<<"\n\t SysID: "<<sysId<<" levelCount: "<<levelCount<<endl;
 #define LVLF(__i, __feature) (h.levels[__i])->Get ## __feature
 #define Extract_Level_Args(__i) LVLF(__i, Level()), LVLF(__i, SizeInBytes()), LVLF(__i, Associativity()), LVLF(__i, LineSize()), LVLF(__i, ReplacementPolicy())
     levels = new CacheLevel*[levelCount];
@@ -1673,13 +1693,12 @@ void CacheStructureHandler::Print(ofstream& f){
 
 bool CacheStructureHandler::Verify(){
     bool passes = true;
-    if (levelCount < 1 || levelCount > 3){
+    if (levelCount < 1 || levelCount > 4){
         warn << "Sysid " << dec << sysId
              << " has " << dec << levelCount << " levels."
              << ENDL << flush;
         passes = false;
     }
-
     ExclusiveCacheLevel* firstvc = NULL;
     for (uint32_t i = 0; i < levelCount; i++){
         if (levels[i]->IsExclusive()){
@@ -1709,6 +1728,7 @@ bool CacheStructureHandler::Verify(){
 }
 
 bool CacheStructureHandler::Init(string desc){
+
     description = desc;
 
     stringstream tokenizer(description);
@@ -1718,24 +1738,62 @@ bool CacheStructureHandler::Init(string desc){
 
     sysId = 0;
     levelCount = 0;
-
+    HybridCache=-1;
     uint32_t whichTok = 0;
     uint32_t firstExcl = INVALID_CACHE_LEVEL;
+    int NumLevelsToken=-1;
     for ( ; tokenizer >> token; whichTok++){
-
+	HitStatus<<"\n\t Token-num: "<<whichTok<<"\t -- "<<token;
         // comment reached on line
         if (token.compare(0, 1, "#") == 0){
             break;
         }
-
+		
         // 2 special tokens appear first
-        if (whichTok == 0){
+        if (whichTok == 0)
+        {
+            HitStatus<<"\n\t Token-size: "<<token.size();
+            if( token.size() > 6)
+            {
+            	if( token.compare(token.size()-6,6,"hybrid")==0) 
+		     {
+		        token.resize(token.size()-6);
+		        HitStatus<<"\n\t Hybrid is on!! "<<"\t "<<token;
+		        NumLevelsToken=2;
+		        HybridCache=1;
+		        // exit(-1);
+		     }
+		     else
+		     {
+		        HybridCache=0;
+		        NumLevelsToken=1;
+		     	HitStatus<<"\n\t It Aint Hybrid :-| \n";
+		     }
+		      
+	    }
+	    else
+	    {
+	    	HybridCache=0;
+	    	NumLevelsToken=1;
+	    }
             if (!ParseInt32(token, &sysId, 0)){
                 return false;
             }
             continue;
         }
-        if (whichTok == 1){
+        if( (HybridCache) && (whichTok==0) )
+        {
+               uint32_t RamMaxAddress; // This should be made uint64_t and the follow Parse functions's call should be to parse 64bits and not 32bits.
+        	if(!ParseInt32(token,&RamMaxAddress,0))
+        	{
+        		HitStatus<<"\n\t Couldn't parse Boundary address: "<<RamMaxAddress<<"(32bit addresses) \n";
+        		return false;
+        	}
+        	else
+        		HitStatus<<"\n\t Yaay! Parsed Boundary address: "<<RamMaxAddress<<"(32bit addresses) \n";
+        
+        }
+        if (whichTok == NumLevelsToken){
             if (!ParsePositiveInt32(token, &levelCount)){
                 return false;
             }
@@ -1743,7 +1801,8 @@ bool CacheStructureHandler::Init(string desc){
             continue;
         }
 
-        int32_t idx = (whichTok - 2) % 4;
+        //int32_t idx = (whichTok - 2) % 4;
+        int32_t idx = (whichTok - (NumLevelsToken+1)) % 4; //NumLevelsToken
         // the first 3 numbers for a cache value
         if (idx < 3){
             if (!ParsePositiveInt32(token, &cacheValues[idx])){
@@ -1766,8 +1825,8 @@ bool CacheStructureHandler::Init(string desc){
                 return false;
             }
 
-            int32_t levelId = (whichTok - 2) / 4;
-
+            //int32_t levelId = (whichTok - 2) / 4;
+	    int32_t levelId=(whichTok -(NumLevelsToken+1))/4;
             // look for victim cache
             if (token.compare(token.size() - 3, token.size(), "_vc") == 0){
                 if (firstExcl == INVALID_CACHE_LEVEL){
@@ -1793,29 +1852,34 @@ bool CacheStructureHandler::Init(string desc){
                     HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
                     l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
                     levels[levelId] = (CacheLevel*)l;
+                    cout<<"\n\t HighlyAssociativeExclusiveCacheLevel \n";
                 } else {
                     HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
                     l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
                     levels[levelId] = (CacheLevel*)l;
+                    cout<<"\n\t HighlyAssociativeInclusiveCacheLevel \n";
                 }
             } else {
                 if (firstExcl != INVALID_CACHE_LEVEL){
                     ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
                     l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
                     levels[levelId] = l;
+                    cout<<"\n\t ExclusiveCacheLevel \n";
                 } else {
                     InclusiveCacheLevel* l = new InclusiveCacheLevel();
                     l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
                     levels[levelId] = l;
+                    cout<<"\n\t InclusiveCacheLevel \n";
                 }
             }
         }
     }
 
-    if (whichTok != levelCount * 4 + 2){
+    //if (whichTok != levelCount * 4 + 2){
+    if (whichTok != levelCount * 4+ (NumLevelsToken+1) ) {
         return false;
     }
-
+    HitStatus<<"\n";	
     return Verify();
 }
 
@@ -1840,8 +1904,130 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     evictInfo.level = INVALID_CACHE_LEVEL;
     while (next < levelCount){
         next = levels[next]->Process(stats, access->memseq, victim, (void*)(&evictInfo));
+        HitStatus<<"\n\t 1. Presence check for address "<<victim;
     }
 }
+
+void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
+    uint32_t next = 0;
+    uint64_t victim = access->address;
+
+    CacheStats* stats = (CacheStats*)stats_in;
+
+    EvictionInfo evictInfo;
+    evictInfo.level = INVALID_CACHE_LEVEL;
+    while (next < levelCount){
+        next = levels[next]->Process(stats, access->memseq, victim, (void*)(&evictInfo));
+        HitStatus<<"\n\t 2. Presence check for address "<<victim;
+    }
+    if(next==levelCount) // Implies miss at LLC
+    {
+    	CheckRange(victim);
+    }
+}
+
+void CacheHybridStructureHandler::ExtractAddresses()
+{
+    stringstream tokenizer(description);
+    int whichTok=0;
+    string token;
+    vector<uint32_t> Start;
+    vector<uint32_t> End;
+    for ( ; tokenizer >> token; whichTok++)
+    {
+        HitStatus<<"\n\t Token "<<token;
+        uint32_t Dummy;
+    	if(whichTok==1)
+	{
+	    	if(!ParsePositiveInt32(token,&Dummy))
+	    	{
+	    		cout<<"\n\t The boundary address of Cache structure: "<<sysId<<" is not positive!! \n";
+	    		cout<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
+	    	}
+	    	else
+	    	{
+	    		Start.push_back(0);
+	    		End.push_back(Dummy);
+	    	}
+	}
+    }
+    
+    AddressRangesCount=Start.size() ;// Should be equal to End.size()
+    
+    RamAddressStart=(uint32_t*)malloc(AddressRangesCount*sizeof(uint32_t));
+    RamAddressEnd=(uint32_t*)malloc(AddressRangesCount*sizeof(uint32_t));
+    HitStatus<<"\n Boundary Address:  \n";
+    for(int AddCopy=0; AddCopy < AddressRangesCount ; AddCopy++)
+    {
+    	RamAddressStart[AddCopy]=Start[AddCopy];
+    	RamAddressEnd[AddCopy]=End[AddCopy];
+    	HitStatus<<"\n\t Pair: "<<AddCopy<<"\t start: "<<RamAddressStart[AddCopy]<<"\t end: "<<RamAddressEnd[AddCopy]<<"\n";
+    
+    }
+    HitStatus<<"\n\t HC status: "<<HybridCache;
+    HitStatus<<"\n\t -- \n";
+    
+}
+
+CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHandler& h)
+{
+    sysId = h.sysId;
+    levelCount = h.levelCount;
+    description.assign(h.description);
+    HybridCache=h.HybridCache;
+    hits=0;
+    misses=0;
+    
+     HitStatus<<"\n\t SysID: "<<sysId<<" levelCount: "<<levelCount<<endl;
+#define LVLF(__i, __feature) (h.levels[__i])->Get ## __feature
+#define Extract_Level_Args(__i) LVLF(__i, Level()), LVLF(__i, SizeInBytes()), LVLF(__i, Associativity()), LVLF(__i, LineSize()), LVLF(__i, ReplacementPolicy())
+    levels = new CacheLevel*[levelCount];
+    for (uint32_t i = 0; i < levelCount; i++){
+        if (LVLF(i, Type()) == CacheLevelType_InclusiveLowassoc){
+            InclusiveCacheLevel* l = new InclusiveCacheLevel();
+            l->Init(Extract_Level_Args(i));
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_InclusiveHighassoc){
+            HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
+            l->Init(Extract_Level_Args(i));
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveLowassoc){
+            ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
+            ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
+            assert(p->GetType() == CacheLevelType_ExclusiveLowassoc);
+            l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveHighassoc){
+            HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
+            ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
+            assert(p->GetType() == CacheLevelType_ExclusiveHighassoc);
+            l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
+            levels[i] = l;
+        } else {
+            assert(false);
+        }
+    }
+}
+
+bool CacheHybridStructureHandler::CheckRange(uint64_t addr)
+{
+	bool AddressNotFound= true; 
+	for(int CurrRange=0 ; (CurrRange < AddressRangesCount) && AddressNotFound ; CurrRange++)
+	{
+		if( ( addr > RamAddressStart[CurrRange] ) && (addr <= RamAddressEnd[CurrRange] ) )
+		{
+			hits+=1;
+			AddressNotFound= false;
+		}
+	
+	}
+	if(AddressNotFound)
+		misses+=1;
+		
+	return true; // CAUTION: No known use of returning 'bool'!! 
+
+}
+
 
 // called for every new image and thread
 SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_key_t iid, thread_key_t tid, image_key_t firstimage){
@@ -1875,24 +2061,38 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     if (typ == AllData->ThreadType || (iid == firstimage)){
         stats->Handlers = new MemoryStreamHandler*[CountMemoryHandlers];
         for (uint32_t i = 0; i < CountCacheStructures; i++){
-            CacheStructureHandler* p = (CacheStructureHandler*)MemoryHandlers[i];
-            CacheStructureHandler* c = new CacheStructureHandler(*p);
-            stats->Handlers[i] = c;
+            CacheStructureHandler* pOld= (CacheStructureHandler*)MemoryHandlers[i];
+            HitStatus<<"\n\t HybridCache- Status: "<<(pOld->HybridCache)<<" of CacheStructure: "<<pOld->sysId;
+            if(pOld->HybridCache)
+            {
+		    CacheHybridStructureHandler* p = (CacheHybridStructureHandler*)pOld; //MemoryHandlers[i];
+		    CacheHybridStructureHandler* c = new CacheHybridStructureHandler(*p);
+		    c->ExtractAddresses();
+		    stats->Handlers[i] = c;
+		    HitStatus<<"\n\t HybridCache has been allocated to sysId: "<<c->sysId<<"\t HC status: "<<p->HybridCache;
+	   }
+	   else
+	   {
+	   	    CacheStructureHandler* c = new CacheStructureHandler(*pOld);
+		    stats->Handlers[i] = c;
+		    HitStatus<<"\n\t Normal cache has been allocated to sysId: "<<c->sysId;		    
+	   
+	   }
+	   
         }
 
         AddressRangeHandler* p = (AddressRangeHandler*)MemoryHandlers[RangeHandlerIndex];
         AddressRangeHandler* r = new AddressRangeHandler(*p);
         stats->Handlers[RangeHandlerIndex] = r;
 
-      /*  if (ReuseWindow || SpatialWindow){
+        if (ReuseWindow || SpatialWindow){
 	    stats->RHandlers = new ReuseDistance*[CountReuseHandlers]; // We have a set of reuse handlers (reuse, spatial) per thread
 	    if(ReuseWindow)
 		    stats->RHandlers[ReuseHandlerIndex] = new ReuseDistance(ReuseWindow, ReuseBin);
 	    if(SpatialWindow)
 	    	stats->RHandlers[SpatialHandlerIndex] = new SpatialLocality(SpatialWindow, SpatialBin, SpatialNMAX);
-        } */
-    } else 
-    {
+        }
+    } else {
         SimulationStats * fs = AllData->GetData(firstimage, tid);
         stats->Handlers = fs->Handlers;
     }
@@ -1927,7 +2127,7 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
 }
 
 void ReadSettings(){
-
+    HitStatus.open("HitStatus.log", std::fstream::out);	
     uint32_t SaveHashMin = MinimumHighAssociativity;
     if (!ReadEnvUint32("METASIM_LIMIT_HIGH_ASSOC", &MinimumHighAssociativity)){
         MinimumHighAssociativity = SaveHashMin;
@@ -2004,14 +2204,17 @@ void ReadSettings(){
         MemoryHandlers[i] = caches[i];
     }
     MemoryHandlers[RangeHandlerIndex] = new AddressRangeHandler();
-//    if (ReuseWindow || SpatialWindow){
-//    	ReuseDistanceHandlers = new ReuseDistance*[CountReuseHandlers];
-//	if(ReuseWindow)
-//		ReuseDistanceHandlers[ReuseHandlerIndex] = new ReuseDistance(ReuseWindow, ReuseBin);      
-//	if(SpatialWindow)
-//		ReuseDistanceHandlers[SpatialHandlerIndex] = new SpatialLocality(SpatialWindow, SpatialBin, SpatialNMAX);
-//    }
-    cout<<"\n\t Stats \n\t\t CountMemoryHandlers "<<CountMemoryHandlers<<"\n\t\t CountReuseHandlers: "<<CountReuseHandlers<<"\n\t\t RangeHandlerIndex: "<<RangeHandlerIndex<<"\n\n";
+    if (ReuseWindow || SpatialWindow){
+    	ReuseDistanceHandlers = new ReuseDistance*[CountReuseHandlers];
+	if(ReuseWindow)
+		ReuseDistanceHandlers[ReuseHandlerIndex] = new ReuseDistance(ReuseWindow, ReuseBin);      
+	if(SpatialWindow)
+		ReuseDistanceHandlers[SpatialHandlerIndex] = new SpatialLocality(SpatialWindow, SpatialBin, SpatialNMAX);
+    }
+    
+     //cout<<"\n\t Stats \n\t\t CountMemoryHandlers "<<CountMemoryHandlers<<"\n\t\t CountReuseHandlers: "<<CountReuseHandlers<<"\n\t\t RangeHandlerIndex: "<<RangeHandlerIndex<<"\n\n";
+  
+    
     uint32_t SampleMax;
     uint32_t SampleOn;
     uint32_t SampleOff;
