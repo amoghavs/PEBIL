@@ -113,9 +113,10 @@ public:
     uint32_t LevelCount;
     uint32_t SysId;
     LevelStats** Stats; // indexed by [memid][level]
+    LevelStats* HybridMemStats; // indexed by [memid]
     uint32_t Capacity;
-
-    CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity);
+    uint32_t HybridCache;
+    CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity,uint32_t hybridcache);
     ~CacheStats();
 
     bool HasMemId(uint32_t memid);
@@ -123,14 +124,20 @@ public:
     void NewMem(uint32_t memid);
 
     void Hit(uint32_t memid, uint32_t lvl);
+    void HybridHit(uint32_t memid);
     void Miss(uint32_t memid, uint32_t lvl);
+    void HybridMiss(uint32_t memid);
     void Hit(uint32_t memid, uint32_t lvl, uint32_t cnt);
+    void HybridHit(uint32_t memid, uint32_t cnt);
     void Miss(uint32_t memid, uint32_t lvl, uint32_t cnt);
+    void HybridMiss(uint32_t memid,uint32_t cnt);
 
     static float GetHitRate(LevelStats* stats);
     static float GetHitRate(uint64_t hits, uint64_t misses);
     uint64_t GetHits(uint32_t memid, uint32_t lvl);
+    uint64_t GetHybridHits(uint32_t memid);
     uint64_t GetMisses(uint32_t memid, uint32_t lvl);
+    uint64_t GetHybridMisses(uint32_t memid);
     uint64_t GetHits(uint32_t lvl);
     uint64_t GetMisses(uint32_t lvl);
     LevelStats* GetLevelStats(uint32_t memid, uint32_t lvl);
@@ -141,6 +148,7 @@ public:
     bool Verify();
 };
 
+ 
 struct AddressRange {
     uint64_t Minimum;
     uint64_t Maximum;
@@ -378,12 +386,12 @@ protected:
       uint64_t AddressRangesCount;
 public:
     //vector<uint32_t> RamAddressStart;     //vector<uint32_t> RamAddressEnd; // CAUTION: Should be uint64_t 
-    uint32_t* RamAddressStart;
-    uint32_t* RamAddressEnd;
+    uint64_t* RamAddressStart;
+    uint64_t* RamAddressEnd;
 
     uint64_t GetHits(){return hits;}
     uint64_t GetMisses(){ return misses;} 
-    bool CheckRange(uint64_t addr); //, uint32_t* set, uint32_t* lineInSet);	
+    bool CheckRange(CacheStats* stats,uint64_t addr,uint32_t memid); //, uint32_t* set, uint32_t* lineInSet);	
     void ExtractAddresses();
     CacheHybridStructureHandler(CacheHybridStructureHandler& h);
     void Process(void* stats, BufferEntry* access);

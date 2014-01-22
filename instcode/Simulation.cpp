@@ -252,7 +252,7 @@ extern "C" {
                 debug(assert(AllData->CountThreads() > 1));
                 continue;
             }
-	    HitStatus<<"\n\t Initiating processing of "<<reference->address;
+	    HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
 
@@ -661,7 +661,7 @@ extern "C" {
                     CacheStats* s = (CacheStats*)st->Stats[sys];
                     assert(s);
                     s->Verify();
-                    CacheStats* c = new CacheStats(s->LevelCount, s->SysId, st->BlockCount);
+                    CacheStats* c = new CacheStats(s->LevelCount, s->SysId, st->BlockCount,s->HybridCache);
                     aggstats[sys] = c;
 
                     for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
@@ -675,6 +675,20 @@ extern "C" {
                             c->Hit(bbid, lvl, s->GetHits(memid, lvl));
                             c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
                         }
+                       
+                    }
+                    if(c->HybridCache){
+		            for (uint32_t memid = 0; memid < st->InstructionCount; memid++){
+		                    uint32_t bbid;
+		                    if (st->PerInstruction){
+		                        bbid = memid;
+		                    } else {
+		                        bbid = st->BlockIds[memid];
+		                    }                    
+		                    c->HybridHit(bbid,s->GetHybridHits(memid)) ;
+		                    c->HybridMiss(bbid,s->GetHybridMisses(memid));                     		
+		                    	
+		            }
                     }
                     if(!c->Verify()) {
                         warn << "Failed check on aggregated cache stats" << ENDL;
@@ -741,7 +755,8 @@ extern "C" {
                            if(HybridCacheStatus[sys])
                            {
                            	CacheHybridStructureHandler* CHSH=(CacheHybridStructureHandler*)stats->Handlers[sys] ;
-                           	MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<ENDL;
+                           	MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<" bbid: "<<bbid<<" hits: "<<c->GetHybridHits(bbid)<<" misses: "<<c->GetHybridMisses(bbid)<<ENDL;
+                           	
                            }
                          
                     }
@@ -790,7 +805,7 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
 
         CacheStats* s = (CacheStats*)stats->Stats[sys];
         assert(s);
-        CacheStats* c = new CacheStats(s->LevelCount, s->SysId, stats->BlockCount);
+        CacheStats* c = new CacheStats(s->LevelCount, s->SysId, stats->BlockCount,s->HybridCache);
         aggstats[sys] = c;
 
         for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
@@ -801,6 +816,15 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
                 c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
             }
         }
+	if(c->HybridCache){
+	    for (uint32_t memid = 0; memid < stats->InstructionCount; memid++){
+	            uint32_t bbid = stats->BlockIds[memid];
+ 	            c->HybridHit(bbid,s->GetHybridHits(memid)) ;
+	            c->HybridMiss(bbid,s->GetHybridMisses(memid));                     		
+	            	
+	    }
+       }        
+        
 
     }
 
@@ -1016,12 +1040,32 @@ void AddressRangeHandler::Process(void* stats, BufferEntry* access){
     rs->Update(memid, addr);
 }
 
-CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity){
+/*CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity){
     LevelCount = lvl;
     SysId = sysid;
     Capacity = capacity;
-
+    HybridCache=0;
     Stats = new LevelStats*[Capacity];
+    for (uint32_t i = 0; i < Capacity; i++){
+        NewMem(i);
+    }
+    assert(Verify());
+}*/
+
+CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity,uint32_t hybridcache){
+    LevelCount = lvl;
+    SysId = sysid;
+    Capacity = capacity;
+    HybridCache=hybridcache;
+    
+    Stats = new LevelStats*[Capacity];
+    if(HybridCache)
+    {	
+    	HybridMemStats=new LevelStats[Capacity];
+	for (uint32_t i = 0; i < Capacity; i++){
+		memset(&HybridMemStats[i],0,sizeof(LevelStats));
+	}    	
+    }
     for (uint32_t i = 0; i < Capacity; i++){
         NewMem(i);
     }
@@ -1073,20 +1117,44 @@ void CacheStats::Hit(uint32_t memid, uint32_t lvl){
     Hit(memid, lvl, 1);
 }
 
+void CacheStats::HybridHit(uint32_t memid){
+    HybridHit(memid, 1);
+}
+
 void CacheStats::Miss(uint32_t memid, uint32_t lvl){
     Miss(memid, lvl, 1);
+}
+
+void CacheStats::HybridMiss(uint32_t memid){
+    HybridMiss(memid, 1);
 }
 
 void CacheStats::Hit(uint32_t memid, uint32_t lvl, uint32_t cnt){
     Stats[memid][lvl].hitCount += cnt;
 }
 
+void CacheStats::HybridHit(uint32_t memid, uint32_t cnt){
+    HybridMemStats[memid].hitCount += cnt;
+}
+
 void CacheStats::Miss(uint32_t memid, uint32_t lvl, uint32_t cnt){
     Stats[memid][lvl].missCount += cnt;
 }
 
+void CacheStats::HybridMiss(uint32_t memid, uint32_t cnt){
+    HybridMemStats[memid].missCount += cnt;
+}
+
 uint64_t CacheStats::GetHits(uint32_t memid, uint32_t lvl){
     return Stats[memid][lvl].hitCount;
+}
+
+uint64_t CacheStats::GetHybridHits(uint32_t memid){
+    return HybridMemStats[memid].hitCount;
+}
+
+uint64_t CacheStats::GetHybridMisses(uint32_t memid){
+    return HybridMemStats[memid].missCount;
 }
 
 uint64_t CacheStats::GetHits(uint32_t lvl){
@@ -1175,7 +1243,7 @@ bool ParseInt32(string token, uint32_t* value, uint32_t min){
     int32_t val;
     uint32_t mult = 1;
     bool ErrorFree = true;
-   
+    int Iter=0; // Remove after understanding!
     istringstream stream(token);
     if (stream >> val){
 
@@ -1547,7 +1615,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, v
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
-    HitStatus<<"\n\t 1. Processing: "<<addr;
+    HitStatus<<"\n\t 1. Processing: "<<addr<<" memid: "<<memid;
     // hit
     if (Search(store, &set, &lineInSet)){
         HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
@@ -1741,8 +1809,8 @@ bool CacheStructureHandler::Init(string desc){
     HybridCache=-1;
     uint32_t whichTok = 0;
     uint32_t firstExcl = INVALID_CACHE_LEVEL;
-    int NumLevelsToken=-1;
-    for ( ; tokenizer >> token; whichTok++){
+    int NumLevelsToken=1;
+    for ( ; (tokenizer >> token) && (whichTok < levelCount * 4+ (NumLevelsToken+1) ); whichTok++){
 	HitStatus<<"\n\t Token-num: "<<whichTok<<"\t -- "<<token;
         // comment reached on line
         if (token.compare(0, 1, "#") == 0){
@@ -1750,8 +1818,7 @@ bool CacheStructureHandler::Init(string desc){
         }
 		
         // 2 special tokens appear first
-        if (whichTok == 0)
-        {
+        if (whichTok == 0){
             HitStatus<<"\n\t Token-size: "<<token.size();
             if( token.size() > 6)
             {
@@ -1759,14 +1826,12 @@ bool CacheStructureHandler::Init(string desc){
 		     {
 		        token.resize(token.size()-6);
 		        HitStatus<<"\n\t Hybrid is on!! "<<"\t "<<token;
-		        NumLevelsToken=2;
 		        HybridCache=1;
 		        // exit(-1);
 		     }
 		     else
 		     {
 		        HybridCache=0;
-		        NumLevelsToken=1;
 		     	HitStatus<<"\n\t It Aint Hybrid :-| \n";
 		     }
 		      
@@ -1774,26 +1839,13 @@ bool CacheStructureHandler::Init(string desc){
 	    else
 	    {
 	    	HybridCache=0;
-	    	NumLevelsToken=1;
 	    }
             if (!ParseInt32(token, &sysId, 0)){
                 return false;
             }
             continue;
         }
-        if( (HybridCache) && (whichTok==0) )
-        {
-               uint32_t RamMaxAddress; // This should be made uint64_t and the follow Parse functions's call should be to parse 64bits and not 32bits.
-        	if(!ParseInt32(token,&RamMaxAddress,0))
-        	{
-        		HitStatus<<"\n\t Couldn't parse Boundary address: "<<RamMaxAddress<<"(32bit addresses) \n";
-        		return false;
-        	}
-        	else
-        		HitStatus<<"\n\t Yaay! Parsed Boundary address: "<<RamMaxAddress<<"(32bit addresses) \n";
-        
-        }
-        if (whichTok == NumLevelsToken){
+         if (whichTok == NumLevelsToken){
             if (!ParsePositiveInt32(token, &levelCount)){
                 return false;
             }
@@ -1802,81 +1854,84 @@ bool CacheStructureHandler::Init(string desc){
         }
 
         //int32_t idx = (whichTok - 2) % 4;
-        int32_t idx = (whichTok - (NumLevelsToken+1)) % 4; //NumLevelsToken
-        // the first 3 numbers for a cache value
-        if (idx < 3){
-            if (!ParsePositiveInt32(token, &cacheValues[idx])){
-                return false;
-            }
+        
+	int32_t idx = (whichTok - (NumLevelsToken+1)) % 4; //NumLevelsToken
+	// the first 3 numbers for a cache value
+	if (idx < 3){
+	    if (!ParsePositiveInt32(token, &cacheValues[idx])){
+	        return false;
+	    }
 
-            // the last token for a cache (replacement policy)
-        } else {
+	    // the last token for a cache (replacement policy)
+	} else {
 
-            // parse replacement policy
-            if (token.compare(0, 3, "lru") == 0){
-                repl = ReplacementPolicy_nmru;
-            } else if (token.compare(0, 4, "rand") == 0){
-                repl = ReplacementPolicy_random;
-            } else if (token.compare(0, 6, "trulru") == 0){
-                repl = ReplacementPolicy_trulru;
-            } else if (token.compare(0, 3, "dir") == 0){
-                repl = ReplacementPolicy_direct;
-            } else {
-                return false;
-            }
+	    // parse replacement policy
+	    if (token.compare(0, 3, "lru") == 0){
+	        repl = ReplacementPolicy_nmru;
+	    } else if (token.compare(0, 4, "rand") == 0){
+	        repl = ReplacementPolicy_random;
+	    } else if (token.compare(0, 6, "trulru") == 0){
+	        repl = ReplacementPolicy_trulru;
+	    } else if (token.compare(0, 3, "dir") == 0){
+	        repl = ReplacementPolicy_direct;
+	    } else {
+	        return false;
+	    }
 
-            //int32_t levelId = (whichTok - 2) / 4;
+	    //int32_t levelId = (whichTok - 2) / 4;
 	    int32_t levelId=(whichTok -(NumLevelsToken+1))/4;
-            // look for victim cache
-            if (token.compare(token.size() - 3, token.size(), "_vc") == 0){
-                if (firstExcl == INVALID_CACHE_LEVEL){
-                    firstExcl = levelId;
-                }
-            } else {
-                if (firstExcl != INVALID_CACHE_LEVEL){
-                    warn << "nonsensible structure found in sysid " << sysId << "; using a victim cache for level " << levelId << ENDL << flush;
-                }
-            }
+	    // look for victim cache
+	    if (token.compare(token.size() - 3, token.size(), "_vc") == 0){
+	        if (firstExcl == INVALID_CACHE_LEVEL){
+	            firstExcl = levelId;
+	        }
+	    } else {
+	        if (firstExcl != INVALID_CACHE_LEVEL){
+	            warn << "nonsensible structure found in sysid " << sysId << "; using a victim cache for level " << levelId << ENDL << flush;
+	        }
+	    }
 
-            // create cache
-            uint32_t sizeInBytes = cacheValues[0];
-            uint32_t assoc = cacheValues[1];
-            uint32_t lineSize = cacheValues[2];
+	    // create cache
+	    uint32_t sizeInBytes = cacheValues[0];
+	    uint32_t assoc = cacheValues[1];
+	    uint32_t lineSize = cacheValues[2];
 
-            if (sizeInBytes < lineSize){
-                return false;
-            }
+	    if (sizeInBytes < lineSize){
+	        return false;
+	    }
 
-            if (assoc >= MinimumHighAssociativity){
-                if (firstExcl != INVALID_CACHE_LEVEL){
-                    HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
-                    l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
-                    levels[levelId] = (CacheLevel*)l;
-                    cout<<"\n\t HighlyAssociativeExclusiveCacheLevel \n";
-                } else {
-                    HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
-                    l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
-                    levels[levelId] = (CacheLevel*)l;
-                    cout<<"\n\t HighlyAssociativeInclusiveCacheLevel \n";
-                }
-            } else {
-                if (firstExcl != INVALID_CACHE_LEVEL){
-                    ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
-                    l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
-                    levels[levelId] = l;
-                    cout<<"\n\t ExclusiveCacheLevel \n";
-                } else {
-                    InclusiveCacheLevel* l = new InclusiveCacheLevel();
-                    l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
-                    levels[levelId] = l;
-                    cout<<"\n\t InclusiveCacheLevel \n";
-                }
-            }
-        }
-    }
+	    if (assoc >= MinimumHighAssociativity){
+	        if (firstExcl != INVALID_CACHE_LEVEL){
+	            HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
+	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
+	            levels[levelId] = (CacheLevel*)l;
+	            cout<<"\n\t HighlyAssociativeExclusiveCacheLevel \n";
+	        } else {
+	            HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
+	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
+	            levels[levelId] = (CacheLevel*)l;
+	            cout<<"\n\t HighlyAssociativeInclusiveCacheLevel \n";
+	        }
+	    } else {
+	        if (firstExcl != INVALID_CACHE_LEVEL){
+	            ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
+	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
+	            levels[levelId] = l;
+	            cout<<"\n\t ExclusiveCacheLevel \n";
+	        } else {
+	            InclusiveCacheLevel* l = new InclusiveCacheLevel();
+	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
+	            levels[levelId] = l;
+	            cout<<"\n\t InclusiveCacheLevel \n";
+	        }
+	    }
+	}
+     }
 
     //if (whichTok != levelCount * 4 + 2){
+    HitStatus<<"\n\t WhichTok before litmus-test: "<<whichTok<<endl;
     if (whichTok != levelCount * 4+ (NumLevelsToken+1) ) {
+        HitStatus<<"\n\t This is what the token count was before rejecting the the cache-description line: "<<whichTok;
         return false;
     }
     HitStatus<<"\n";	
@@ -1922,7 +1977,7 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     }
     if(next==levelCount) // Implies miss at LLC
     {
-    	CheckRange(victim);
+    	CheckRange(stats,victim,access->memseq);
     }
 }
 
@@ -1931,31 +1986,52 @@ void CacheHybridStructureHandler::ExtractAddresses()
     stringstream tokenizer(description);
     int whichTok=0;
     string token;
-    vector<uint32_t> Start;
-    vector<uint32_t> End;
+    vector<uint64_t> Start;
+    vector<uint64_t> End;
+    int NumLevelsToken=1;
+    int HybridAddressCount=0;
     for ( ; tokenizer >> token; whichTok++)
     {
         HitStatus<<"\n\t Token "<<token;
-        uint32_t Dummy;
-    	if(whichTok==1)
+        uint64_t Dummy;
+    	if(whichTok>=(levelCount * 4+ (NumLevelsToken+1) ))
 	{
-	    	if(!ParsePositiveInt32(token,&Dummy))
+		istringstream stream(token);
+		stream>>Dummy;
+		cout<<dec<<Dummy;
+	    	if(Dummy<0x1)
 	    	{
-	    		cout<<"\n\t The boundary address of Cache structure: "<<sysId<<" is not positive!! \n";
+	    		cout<<"\n\t The boundary address of Cache structure: "<<sysId<<" token "<<token<<" is "<<Dummy<<" is not positive!! \n";
 	    		cout<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
 	    	}
 	    	else
 	    	{
-	    		Start.push_back(0);
-	    		End.push_back(Dummy);
+	    		if(HybridAddressCount%2==0)
+		    	{
+		    		Start.push_back(Dummy);
+		    		HitStatus<<"\n\t Hybrid-Start-Address: "<<Dummy;
+		    	}
+	    		else
+	    		{
+	    			End.push_back(Dummy);
+		    		HitStatus<<"\n\t Hybrid-End-Address: "<<Dummy;
+		    	}	    			
+	    		HybridAddressCount+=1;	
 	    	}
 	}
     }
     
+    if( (HybridAddressCount%2!=0) || (HybridAddressCount==0))
+    {
+    	HitStatus<<"\n\t HybridAddressCount: "<<HybridAddressCount<<" is illegal!! ";
+    	HitStatus<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
+    	
+    }
+    
     AddressRangesCount=Start.size() ;// Should be equal to End.size()
     
-    RamAddressStart=(uint32_t*)malloc(AddressRangesCount*sizeof(uint32_t));
-    RamAddressEnd=(uint32_t*)malloc(AddressRangesCount*sizeof(uint32_t));
+    RamAddressStart=(uint64_t*)malloc(AddressRangesCount*sizeof(uint64_t));
+    RamAddressEnd=(uint64_t*)malloc(AddressRangesCount*sizeof(uint64_t));
     HitStatus<<"\n Boundary Address:  \n";
     for(int AddCopy=0; AddCopy < AddressRangesCount ; AddCopy++)
     {
@@ -2009,7 +2085,7 @@ CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHan
     }
 }
 
-bool CacheHybridStructureHandler::CheckRange(uint64_t addr)
+bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uint32_t memid)
 {
 	bool AddressNotFound= true; 
 	for(int CurrRange=0 ; (CurrRange < AddressRangesCount) && AddressNotFound ; CurrRange++)
@@ -2018,12 +2094,16 @@ bool CacheHybridStructureHandler::CheckRange(uint64_t addr)
 		{
 			hits+=1;
 			AddressNotFound= false;
+			stats->HybridMemStats[memid].hitCount++; //=1;
 		}
 	
 	}
 	if(AddressNotFound)
+	{
 		misses+=1;
-		
+		stats->HybridMemStats[memid].missCount++; //=1;
+	}
+	HitStatus<<"\n\t In Check-range for address:"<<addr<<" and my memid: "<<memid;		
 	return true; // CAUTION: No known use of returning 'bool'!! 
 
 }
@@ -2052,8 +2132,8 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     stats->Stats = new StreamStats*[CountMemoryHandlers];
     bzero(stats->Stats, sizeof(StreamStats*) * CountMemoryHandlers);
     for (uint32_t i = 0; i < CountCacheStructures; i++){
-        CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
-        stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount);
+ 		CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
+		stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount, c->HybridCache);
     }
     stats->Stats[RangeHandlerIndex] = new RangeStats(s->InstructionCount);
 
