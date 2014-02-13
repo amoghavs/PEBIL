@@ -591,7 +591,7 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
 
         CacheStats* s = (CacheStats*)stats->Stats[sys];
         assert(s);
-        CacheStats* c = new CacheStats(s->LevelCount, s->SysId, stats->BlockCount);
+        CacheStats* c = new CacheStats(s->LevelCount, s->SysId, stats->BlockCount,s->HybridCache);
         aggstats[sys] = c;
 
         for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
@@ -817,17 +817,38 @@ void AddressRangeHandler::Process(void* stats, BufferEntry* access){
     rs->Update(memid, addr);
 }
 
-CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity){
+/*CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity){
     LevelCount = lvl;
     SysId = sysid;
     Capacity = capacity;
-
+    HybridCache=0;
     Stats = new LevelStats*[Capacity];
     for (uint32_t i = 0; i < Capacity; i++){
         NewMem(i);
     }
     assert(Verify());
+}*/
+
+CacheStats::CacheStats(uint32_t lvl, uint32_t sysid, uint32_t capacity,uint32_t hybridcache){
+    LevelCount = lvl;
+    SysId = sysid;
+    Capacity = capacity;
+    HybridCache=hybridcache;
+    
+    Stats = new LevelStats*[Capacity];
+    if(HybridCache)
+    {	
+    	HybridMemStats=new LevelStats[Capacity];
+	for (uint32_t i = 0; i < Capacity; i++){
+		memset(&HybridMemStats[i],0,sizeof(LevelStats));
+	}    	
+    }
+    for (uint32_t i = 0; i < Capacity; i++){
+        NewMem(i);
+    }
+    assert(Verify());
 }
+
 
 CacheStats::~CacheStats(){
     if (Stats){
@@ -1656,6 +1677,47 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     }
 }
 
+CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHandler& h)
+{
+    sysId = h.sysId;
+    levelCount = h.levelCount;
+    description.assign(h.description);
+    HybridCache=h.HybridCache;
+    hits=0;
+    misses=0;
+    
+    
+#define LVLF(__i, __feature) (h.levels[__i])->Get ## __feature
+#define Extract_Level_Args(__i) LVLF(__i, Level()), LVLF(__i, SizeInBytes()), LVLF(__i, Associativity()), LVLF(__i, LineSize()), LVLF(__i, ReplacementPolicy())
+    levels = new CacheLevel*[levelCount];
+    for (uint32_t i = 0; i < levelCount; i++){
+        if (LVLF(i, Type()) == CacheLevelType_InclusiveLowassoc){
+            InclusiveCacheLevel* l = new InclusiveCacheLevel();
+            l->Init(Extract_Level_Args(i));
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_InclusiveHighassoc){
+            HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
+            l->Init(Extract_Level_Args(i));
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveLowassoc){
+            ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
+            ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
+            assert(p->GetType() == CacheLevelType_ExclusiveLowassoc);
+            l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
+            levels[i] = l;
+        } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveHighassoc){
+            HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
+            ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
+            assert(p->GetType() == CacheLevelType_ExclusiveHighassoc);
+            l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
+            levels[i] = l;
+        } else {
+            assert(false);
+        }
+    }
+}
+
+
 // called for every new image and thread
 SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_key_t iid, thread_key_t tid, image_key_t firstimage){
 
@@ -1679,8 +1741,8 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     stats->Stats = new StreamStats*[CountMemoryHandlers];
     bzero(stats->Stats, sizeof(StreamStats*) * CountMemoryHandlers);
     for (uint32_t i = 0; i < CountCacheStructures; i++){
-        CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
-        stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount);
+ 		CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
+		stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount, c->HybridCache);
     }
     stats->Stats[RangeHandlerIndex] = new RangeStats(s->InstructionCount);
 
@@ -1688,9 +1750,21 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     if (typ == AllData->ThreadType || (iid == firstimage)){
         stats->Handlers = new MemoryStreamHandler*[CountMemoryHandlers];
         for (uint32_t i = 0; i < CountCacheStructures; i++){
-            CacheStructureHandler* p = (CacheStructureHandler*)MemoryHandlers[i];
-            CacheStructureHandler* c = new CacheStructureHandler(*p);
-            stats->Handlers[i] = c;
+            CacheStructureHandler* pOld= (CacheStructureHandler*)MemoryHandlers[i];
+              if(pOld->HybridCache)
+            {
+		    CacheHybridStructureHandler* p = (CacheHybridStructureHandler*)pOld; //MemoryHandlers[i];
+		    CacheHybridStructureHandler* c = new CacheHybridStructureHandler(*p);
+		    c->ExtractAddresses();
+		    stats->Handlers[i] = c;
+ 	   }
+	   else
+	   {
+	   	    CacheStructureHandler* c = new CacheStructureHandler(*pOld);
+		    stats->Handlers[i] = c;
+ 	   
+	   }
+	   
         }
 
         AddressRangeHandler* p = (AddressRangeHandler*)MemoryHandlers[RangeHandlerIndex];
@@ -1703,9 +1777,8 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
 		    stats->RHandlers[ReuseHandlerIndex] = new ReuseDistance(ReuseWindow, ReuseBin);
 	    if(SpatialWindow)
 	    	stats->RHandlers[SpatialHandlerIndex] = new SpatialLocality(SpatialWindow, SpatialBin, SpatialNMAX);
-        } 
-    } else 
-    {
+        }
+    } else {
         SimulationStats * fs = AllData->GetData(firstimage, tid);
         stats->Handlers = fs->Handlers;
     }
@@ -1738,6 +1811,7 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
 
     return stats;
 }
+
 
 void ReadSettings(){
 
