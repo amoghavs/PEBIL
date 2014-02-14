@@ -135,7 +135,8 @@ CacheSimulation::CacheSimulation(ElfFile* elf)
     exitFunc = NULL;
     entryFunc = NULL;
 
-    ASSERT(isPowerOfTwo(sizeof(BufferEntry)));
+  //  ASSERT(isPowerOfTwo(sizeof(BufferEntry)));
+   printf("\n\t FYI: sizeof(BufferEntry) is not checked for being power of two!!! \n");
 }
 
 
@@ -188,10 +189,12 @@ void CacheSimulation::instrument(){
             blockSeq++;
             Function* f = (Function*)bb->getLeader()->getContainer();
             functionsToInst.insert(f);
+            // printf("\n\t New block starting at prog-addr: %d ",bb->getProgramAddress());
             for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
                 X86Instruction* memop = bb->getInstruction(j);
                 if (memop->isMemoryOperation()){
                     memopSeq++;
+                   // printf("\n\t This is a memop with prog-id: %d , isStore(): %d isLoad(): %d ",memop->getProgramAddress(), memop->isStore(),memop->isLoad());
                 }
             }
         }
@@ -323,6 +326,7 @@ void CacheSimulation::instrument(){
     blockSeq = 0;
     memopSeq = 0;
     uint32_t currentLeader = 0;
+    uint8_t loadstoreflag;    
     for (uint32_t i = 0; i < getNumberOfExposedBasicBlocks(); i++){
         BasicBlock* bb = getExposedBasicBlock(i);
         Function* f = (Function*)bb->getLeader()->getContainer();
@@ -426,7 +430,9 @@ void CacheSimulation::instrument(){
                                     break;
                                 }
                             }
+                                //printf("\n\t Dead->contains(k): %d ",dead->contains(k));                            
                         }
+                        //printf("\n\t sr1: %d sr2: %d ",sr1,sr2);
                         delete inv;
                         delete dead;
 
@@ -527,9 +533,14 @@ void CacheSimulation::instrument(){
                             } else if (sr3 == X86_REG_INVALID){
                                 sr3 = k;
                                 break;
-                            }
+                                
+                            }                     
+                                                           
                         }
+                       // printf("\n\t Dead->contains(k): %d ",dead->contains(k)); 
+
                     }
+                    // printf("\n\t sr1: %d sr2: %d sr3: %d ",sr1,sr2,sr3);
                     delete inv;
                     delete dead;
 
@@ -541,14 +552,15 @@ void CacheSimulation::instrument(){
                         }
                         delete tdata;
                     }
-
+		    
                     if (usePIC){
                         snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
                     } else {
                         snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
                     }
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr2, offsetof(BufferEntry, __buf_current), sr3));
-                    snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitRegImmMultReg(sr3, sizeof(BufferEntry), sr3));
+                    //snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
 
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
@@ -557,7 +569,7 @@ void CacheSimulation::instrument(){
                     ASSERT(memopIdInBlock < bb->getNumberOfMemoryOps());
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));
-                    // sr2 now holds the base of this memop's buffer entry
+                      // sr2 now holds the base of this memop's buffer entry
 
                     Vector<X86Instruction*>* addrStore = X86InstructionFactory64::emitAddressComputation(memop, sr3);
                     while (!(*addrStore).empty()){
@@ -565,21 +577,24 @@ void CacheSimulation::instrument(){
                     }
                     delete addrStore;
                     // sr3 holds the memory address being used by memop
-
+                     // put the 4 elements of a BufferEntry into place
+ 
+                    loadstoreflag=(memop->isLoad());                   
                     
-                    // put the 4 elements of a BufferEntry into place
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
-                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));
-                    // this uses the value stored in the image key storage location
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
+                     // this uses the value stored in the image key storage location
                     //snip->addSnippetInstruction(linkInstructionToData(X86InstructionFactory64::emitLoadRipImmReg(0, sr3), this, getInstDataAddress() + imageKey, false));
                     //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr3, 0, sr3));
                     //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, imageid), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImm64ToReg(imageHash, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, imageid), true));
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(loadstoreflag, sr3));
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, loadstoreflag), true));                      
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveThreadIdToReg(sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, threadid), true));
-
+ 
                     if (isPerInstruction()){
                         LineInfo* li = NULL;
                         if (lineInfoFinder){
