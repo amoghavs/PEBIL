@@ -326,7 +326,7 @@ void CacheSimulation::instrument(){
     blockSeq = 0;
     memopSeq = 0;
     uint32_t currentLeader = 0;
-    uint8_t loadstoreflag;    
+    uint64_t loadstoreflag;    
     for (uint32_t i = 0; i < getNumberOfExposedBasicBlocks(); i++){
         BasicBlock* bb = getExposedBasicBlock(i);
         Function* f = (Function*)bb->getLeader()->getContainer();
@@ -580,7 +580,7 @@ void CacheSimulation::instrument(){
                      // put the 4 elements of a BufferEntry into place
  
                     loadstoreflag=(memop->isLoad());                   
-                    
+                    printf("\n\t loadstoreflag: %d",loadstoreflag);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   

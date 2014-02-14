@@ -257,7 +257,7 @@ extern "C" {
             
 	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
 	   // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
-	    
+	    HitStatus<<"\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
  	    ReuseEntry entry = ReuseEntry();
@@ -677,7 +677,7 @@ extern "C" {
                             }
                             c->Hit(bbid, lvl, s->GetHits(memid, lvl));
                             c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
-                            //c->Load(bbid, lvl, s->GetLoads(memid, lvl));
+                            c->Load(bbid, lvl, s->GetLoads(memid, lvl));
                         }
                        
                     }
@@ -753,6 +753,7 @@ extern "C" {
                               << TAB << dec << (lvl+1)
                               << TAB << dec << c->GetHits(bbid, lvl)
                               << TAB << dec << c->GetMisses(bbid, lvl)
+                              << TAB << dec << c->GetLoads(bbid,lvl)
                               << ENDL;
                         }
                            
@@ -818,7 +819,7 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
                 uint32_t bbid = stats->BlockIds[memid];
                 c->Hit(bbid, lvl, s->GetHits(memid, lvl));
                 c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
-               // c->Load(bbid, lvl, s->GetLoads(memid, lvl));
+                c->Load(bbid, lvl, s->GetLoads(memid, lvl));
             }
         }
 	if(c->HybridCache){
@@ -1638,7 +1639,7 @@ bool CacheLevel::MultipleLines(uint64_t addr, uint32_t width){
     return false;
 }
 
-uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, void* info){
+uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = GetStorage(addr);
     	
@@ -1650,7 +1651,11 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, v
     if (Search(store, &set, &lineInSet)){
         // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
         stats->Stats[memid][level].hitCount++;
-       // stats->Stats[memid][level].loadCount++;
+        if(loadstoreflag)
+        {
+	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSflog: "<<loadstoreflag;
+        	stats->Stats[memid][level].loadCount++;
+        }
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
@@ -1662,7 +1667,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, v
     return level + 1;
 }
 
-uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, void* info){
+uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
     uint32_t set = 0;
     uint32_t lineInSet = 0;
 
@@ -1694,7 +1699,11 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     // hit
     if (Search(store, &set, &lineInSet)){
         stats->Stats[memid][level].hitCount++;
-       // stats->Stats[memid][level].loadCount++;
+        if(loadstoreflag)       
+	{
+	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSflog: "<<loadstoreflag;
+	        stats->Stats[memid][level].loadCount++;       
+	}
         MarkUsed(set, lineInSet);
 
         e->level = level;
@@ -1990,13 +1999,18 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
     while (next < levelCount){
-       // cout<<"\n\t 1. Presence check for address "<<victim;
-        next = levels[next]->Process(stats, access->memseq, victim, (void*)(&evictInfo));
-        // HitStatus<<"\n\t 1. Presence check for address "<<victim;
+        next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
+        HitStatus<<"\n\t 1. Presence check for address "<<victim;
     }
 
-     if(next >= levelCount)
-    	stats->Stats[access->memseq][levelCount-1].loadCount++;
+    if(next>=levelCount) // Implies miss at LLC
+    {
+    	if(access->loadstoreflag)
+    	{
+    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSflog: "<<access->loadstoreflag;
+    		stats->Stats[access->memseq][levelCount-1].loadCount++;
+    	}
+    }
 }
 
 void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
@@ -2008,15 +2022,19 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
     while (next < levelCount){
-        next = levels[next]->Process(stats, access->memseq, victim, (void*)(&evictInfo));
-        // HitStatus<<"\n\t 2. Presence check for address "<<victim;
+         next = levels[next]->Process(stats, access->memseq, victim,access->loadstoreflag, (void*)(&evictInfo));
+         HitStatus<<"\n\t 2. Presence check for address "<<victim;
     }
   
     	 
     if(next>=levelCount) // Implies miss at LLC
     {
     	CheckRange(stats,victim,access->memseq);
-    	//stats->Stats[access->memseq][levelCount-1].loadCount++;
+    	if(access->loadstoreflag)
+    	{
+    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSflog: "<<access->loadstoreflag;
+    		stats->Stats[access->memseq][levelCount-1].loadCount++;
+    	}
     }
 }
 
