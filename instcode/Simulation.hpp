@@ -73,7 +73,8 @@ struct EvictionInfo {
 struct LevelStats {
     uint64_t hitCount;
     uint64_t missCount;
-    uint64_t loadCount; // Will need to add "Store-Count"??
+    uint64_t loadCount; 
+    uint64_t storeCount;
 };
 
 static uint32_t RandomInt();
@@ -137,6 +138,11 @@ public:
     void Load(uint32_t memid, uint32_t lvl, uint32_t cnt);
     uint64_t GetLoads(uint32_t memid, uint32_t lvl);
     uint64_t GetLoads(uint32_t lvl);
+    void Store(uint32_t memid,uint32_t lvl);
+    void Store(uint32_t memid, uint32_t lvl, uint32_t cnt);
+    uint64_t GetStores(uint32_t memid, uint32_t lvl);
+    uint64_t GetStores(uint32_t lvl);    
+    
     
     static float GetHitRate(LevelStats* stats);
     static float GetHitRate(uint64_t hits, uint64_t misses);

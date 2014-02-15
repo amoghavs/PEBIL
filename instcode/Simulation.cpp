@@ -257,7 +257,7 @@ extern "C" {
             
 	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
 	   // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
-	    HitStatus<<"\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
+	    HitStatus<<"\n\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
  	    ReuseEntry entry = ReuseEntry();
@@ -622,8 +622,16 @@ extern "C" {
                         uint64_t h = c->GetHits(lvl);
                         uint64_t m = c->GetMisses(lvl);
                         uint64_t t = h + m;
-                        MemFile << "l" << dec << lvl << "[" << h << "/" << t << "(" << CacheStats::GetHitRate(h, m) << ")] ";
+                        MemFile << "l" << dec << lvl << "[" << h << "/" << t << "(" << CacheStats::GetHitRate(h, m) <<")] ";
                     }
+                    MemFile<<"\n Load Store Stats -->";
+                    for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
+                        uint64_t l = c->GetLoads(lvl);
+                        uint64_t s = c->GetStores(lvl);
+                        uint64_t t = l + s;
+                        MemFile << " l" << dec << lvl << "[" << l << "/" << t <<"] ";//<< "(" << (l/t)<<")] ";
+                    }
+                    
                     MemFile << ENDL;
                 }
             }
@@ -678,6 +686,7 @@ extern "C" {
                             c->Hit(bbid, lvl, s->GetHits(memid, lvl));
                             c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
                             c->Load(bbid, lvl, s->GetLoads(memid, lvl));
+                            c->Store(bbid, lvl, s->GetStores(memid, lvl));
                         }
                        
                     }
@@ -754,6 +763,7 @@ extern "C" {
                               << TAB << dec << c->GetHits(bbid, lvl)
                               << TAB << dec << c->GetMisses(bbid, lvl)
                               << TAB << dec << c->GetLoads(bbid,lvl)
+                              << TAB << dec << c->GetStores(bbid,lvl)
                               << ENDL;
                         }
                            
@@ -820,6 +830,7 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
                 c->Hit(bbid, lvl, s->GetHits(memid, lvl));
                 c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
                 c->Load(bbid, lvl, s->GetLoads(memid, lvl));
+                c->Store(bbid, lvl, s->GetStores(memid, lvl));
             }
         }
 	if(c->HybridCache){
@@ -1142,6 +1153,27 @@ uint64_t CacheStats::GetLoads(uint32_t lvl){
     return loads;
 }
 
+void CacheStats::Store(uint32_t memid, uint32_t lvl){
+    Store(memid, lvl, 1);
+}
+
+void CacheStats::Store(uint32_t memid, uint32_t lvl, uint32_t cnt){
+    Stats[memid][lvl].storeCount += cnt;
+}
+
+
+uint64_t CacheStats::GetStores(uint32_t memid, uint32_t lvl){
+    return Stats[memid][lvl].storeCount;
+}
+
+
+uint64_t CacheStats::GetStores(uint32_t lvl){
+    uint64_t stores = 0;
+    for (uint32_t i = 0; i < Capacity; i++){
+        stores += Stats[i][lvl].storeCount;
+    }
+    return stores;
+}
 
 
 void CacheStats::Hit(uint32_t memid, uint32_t lvl){
@@ -1653,9 +1685,14 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
         stats->Stats[memid][level].hitCount++;
         if(loadstoreflag)
         {
-	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSflog: "<<loadstoreflag;
+	         HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
         	stats->Stats[memid][level].loadCount++;
         }
+        else
+        {
+	         HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+        	stats->Stats[memid][level].storeCount++;
+        }        
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
@@ -1701,9 +1738,14 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
         stats->Stats[memid][level].hitCount++;
         if(loadstoreflag)       
 	{
-	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSflog: "<<loadstoreflag;
+	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
 	        stats->Stats[memid][level].loadCount++;       
 	}
+	else
+	{
+	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+	        stats->Stats[memid][level].storeCount++;       
+	}	
         MarkUsed(set, lineInSet);
 
         e->level = level;
@@ -1975,7 +2017,7 @@ bool CacheStructureHandler::Init(string desc){
         HitStatus<<"\n\t This is what the token count was before rejecting the the cache-description line: "<<whichTok;
         return false;
     }
-    HitStatus<<"\n";	
+     HitStatus<<"\n";	
     return Verify();
 }
 
@@ -1999,17 +2041,23 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
     while (next < levelCount){
+        HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
-        HitStatus<<"\n\t 1. Presence check for address "<<victim;
+        
     }
 
-    if(next>=levelCount) // Implies miss at LLC
+    if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
     	if(access->loadstoreflag)
     	{
-    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSflog: "<<access->loadstoreflag;
+    		 HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
     		stats->Stats[access->memseq][levelCount-1].loadCount++;
     	}
+    	else
+    	{
+    		 HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
+    		stats->Stats[access->memseq][levelCount-1].storeCount++;    	
+    	}    	
     }
 }
 
@@ -2027,13 +2075,18 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     }
   
     	 
-    if(next>=levelCount) // Implies miss at LLC
+    if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
     	CheckRange(stats,victim,access->memseq);
     	if(access->loadstoreflag)
     	{
-    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSflog: "<<access->loadstoreflag;
+    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
     		stats->Stats[access->memseq][levelCount-1].loadCount++;
+    	}
+    	else
+    	{
+    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
+    		stats->Stats[access->memseq][levelCount-1].storeCount++;    	
     	}
     }
 }
@@ -2351,7 +2404,7 @@ void ReadSettings(){
 		ReuseDistanceHandlers[SpatialHandlerIndex] = new SpatialLocality(SpatialWindow, SpatialBin, SpatialNMAX);
     }
     
-     //cout<<"\n\t Stats \n\t\t CountMemoryHandlers "<<CountMemoryHandlers<<"\n\t\t CountReuseHandlers: "<<CountReuseHandlers<<"\n\t\t RangeHandlerIndex: "<<RangeHandlerIndex<<"\n\n";
+    // cout<<"\n\t Stats \n\t\t CountMemoryHandlers "<<CountMemoryHandlers<<"\n\t\t CountReuseHandlers: "<<CountReuseHandlers<<"\n\t\t RangeHandlerIndex: "<<RangeHandlerIndex<<"\n\n";
   
     
     uint32_t SampleMax;
