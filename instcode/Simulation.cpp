@@ -643,7 +643,7 @@ extern "C" {
             << TAB << "BlockCounter" << TAB << "InstructionSimulated" << TAB << "MinAddress" << TAB << "MaxAddress" << TAB << "AddrRange"
             << ENDL;
         MemFile
-            << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << ENDL;
+            << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << TAB << "LoadCount" << TAB << "StoreCount" << ENDL;
 
         for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
             for (set<thread_key_t>::iterator it = AllData->allthreads.begin(); it != AllData->allthreads.end(); it++){
@@ -1682,23 +1682,53 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     // hit
     if (Search(store, &set, &lineInSet)){
         // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
-        stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag)
+        uint32_t BothLoadStore= (loadstoreflag&0b11);
+	//cout<<"\n\t loadstoreflag: %d "<<loadstoreflag<<" level "<<level;
+	uint32_t uptoLevel;
+        if(level)
+        	uptoLevel=(level-1);
+        else
+        	uptoLevel=level;	
+        if(BothLoadStore==0b11)
         {
-	         HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-        	stats->Stats[memid][level].loadCount++;
+		for(uint32_t i=0;i<uptoLevel;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load
+			stats->Stats[memid][i].missCount++; // Once for store		
+		}
+		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+		stats->Stats[memid][level].loadCount++;
+		stats->Stats[memid][level].storeCount++;
+		stats->Stats[memid][level].hitCount++; // Once for store	
+		stats->Stats[memid][level].hitCount++; //  Once for load
         }
         else
         {
-	         HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-        	stats->Stats[memid][level].storeCount++;
-        }        
-        MarkUsed(set, lineInSet);
+	        stats->Stats[memid][level].hitCount++; // Once for load/store 
+
+	        //cout<<"\n\t Take it: "<<level<<" (level-1) "<<(level-1);
+		for(int i=0;i<uptoLevel;i++)
+		{
+			//cout<<"\n\t Updating miss at Level:  "<<i;
+			stats->Stats[memid][i].missCount++; // Once for load/store 
+		}	        
+		if(loadstoreflag&0b10)
+		{
+			HitStatus<<"\n\t Must be updating LOAD at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][level].loadCount++;
+		}
+		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
+		{
+			 HitStatus<<"\n\t Must be updating STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][level].storeCount++;
+		}      
+        }  
+        MarkUsed(set, lineInSet); // CAUTION: WILL THIS AFFECT COUNTING A L/S as two different access.
         return INVALID_CACHE_LEVEL;
     }
     // miss
 
-    stats->Stats[memid][level].missCount++;
+    //stats->Stats[memid][level].missCount++;
     Replace(store, set, LineToReplace(set));
     // HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
     return level + 1;
@@ -1735,17 +1765,48 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
 
     // hit
     if (Search(store, &set, &lineInSet)){
-        stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag)       
-	{
-	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-	        stats->Stats[memid][level].loadCount++;       
-	}
-	else
-	{
-	        HitStatus<<"\n\t Must be updating at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-	        stats->Stats[memid][level].storeCount++;       
-	}	
+        uint32_t BothLoadStore= (loadstoreflag&0b11);
+	//cout<<"\n\t loadstoreflag: %d "<<loadstoreflag<<" level "<<level;
+	uint32_t uptoLevel;
+        if(level)
+        	uptoLevel=(level-1);
+        else
+        	uptoLevel=level;	
+        if(BothLoadStore==0b11)
+        {
+		for(uint32_t i=0;i<uptoLevel;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load
+			stats->Stats[memid][i].missCount++; // Once for store		
+		}
+		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+		stats->Stats[memid][level].loadCount++;
+		stats->Stats[memid][level].storeCount++;
+		stats->Stats[memid][level].hitCount++; // Once for store	
+		stats->Stats[memid][level].hitCount++; //  Once for load
+        }
+        else
+        {
+	        stats->Stats[memid][level].hitCount++; // Once for load/store 
+
+	        //cout<<"\n\t Take it: "<<level<<" (level-1) "<<(level-1);
+		for(int i=0;i<uptoLevel;i++)
+		{
+			//cout<<"\n\t Updating miss at Level:  "<<i;
+			stats->Stats[memid][i].missCount++; // Once for load/store 
+		}	        
+		if(loadstoreflag&0b10)
+		{
+			HitStatus<<"\n\t Must be updating LOAD at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][level].loadCount++;
+		}
+		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
+		{
+			 HitStatus<<"\n\t Must be updating STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][level].storeCount++;
+		}      
+        }  
+
         MarkUsed(set, lineInSet);
 
         e->level = level;
@@ -1760,7 +1821,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     }
 
     // miss
-    stats->Stats[memid][level].missCount++;
+   // stats->Stats[memid][level].missCount++;
 
     if (level == LastExclusive){
         e->level = LastExclusive + 1;
@@ -2048,16 +2109,38 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
-    	if(access->loadstoreflag)
-    	{
-    		 HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
-    		stats->Stats[access->memseq][levelCount-1].loadCount++;
-    	}
-    	else
-    	{
-    		 HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
-    		stats->Stats[access->memseq][levelCount-1].storeCount++;    	
-    	}    	
+        uint64_t memid=access->memseq;
+        uint64_t loadstoreflag=access->loadstoreflag;
+        uint32_t BothLoadStore= (loadstoreflag&0b11);
+        
+        if(BothLoadStore==0b11)
+        {
+		for(uint32_t i=0;i<levelCount;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load
+			stats->Stats[memid][i].missCount++; // Once for store		
+		}
+		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+		stats->Stats[memid][levelCount-1].loadCount++;
+		stats->Stats[memid][levelCount-1].storeCount++;
+        }
+        else
+        {
+		for(uint32_t i=0;i<levelCount;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load/store 
+		}	        
+		if(loadstoreflag&0b10)
+		{
+			HitStatus<<"\n\t Must be updating LOAD at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][levelCount-1].loadCount++;
+		}
+		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
+		{
+			 HitStatus<<"\n\t Must be updating STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][levelCount-1].storeCount++;
+		}      
+        } 	
     }
 }
 
@@ -2078,16 +2161,38 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
     	CheckRange(stats,victim,access->memseq);
-    	if(access->loadstoreflag)
-    	{
-    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
-    		stats->Stats[access->memseq][levelCount-1].loadCount++;
-    	}
-    	else
-    	{
-    		HitStatus<<"\n\t Must be updating at the last stage since there is no hit at "<<victim<<" LSFlag: "<<access->loadstoreflag;
-    		stats->Stats[access->memseq][levelCount-1].storeCount++;    	
-    	}
+        uint64_t memid=access->memseq;
+        uint64_t loadstoreflag=access->loadstoreflag;
+        uint32_t BothLoadStore= (loadstoreflag&0b11);
+        
+        if(BothLoadStore==0b11)
+        {
+		for(uint32_t i=0;i<levelCount;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load
+			stats->Stats[memid][i].missCount++; // Once for store		
+		}
+		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+		stats->Stats[memid][levelCount-1].loadCount++;
+		stats->Stats[memid][levelCount-1].storeCount++;
+        }
+        else
+        {
+		for(uint32_t i=0;i<levelCount;i++)
+		{
+			stats->Stats[memid][i].missCount++; // Once for load/store 
+		}	        
+		if(loadstoreflag&0b10)
+		{
+			HitStatus<<"\n\t Must be updating LOAD at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][levelCount-1].loadCount++;
+		}
+		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
+		{
+			 HitStatus<<"\n\t Must be updating STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
+			stats->Stats[memid][levelCount-1].storeCount++;
+		}      
+        } 
     }
 }
 

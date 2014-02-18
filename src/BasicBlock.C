@@ -329,9 +329,22 @@ uint32_t BasicBlock::getNumberOfStringOps(){
 uint32_t BasicBlock::getNumberOfMemoryOps(){
     uint32_t memCount = 0;
     for (uint32_t i = 0; i < instructions.size(); i++){
-        if (instructions[i]->isMemoryOperation()){
-            memCount++;
-        }
+       // if (instructions[i]->isMemoryOperation()){
+       //     memCount++;
+       // }
+       if (instructions[i]->isMemoryOperation())
+       {
+	       if(instructions[i]->isLoad())
+	       {
+		       	memCount++;
+	       }
+	       if(instructions[i]->isStore())
+	       {
+		       	memCount++;
+	       }
+       }
+       
+       
     }
     return memCount;
 }

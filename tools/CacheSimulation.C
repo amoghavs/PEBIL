@@ -313,7 +313,7 @@ void CacheSimulation::instrument(){
     uint64_t imageHash = getElfFile()->getUniqueId();
 
     // TODO: remove all FP work from cache simulation?
-    //simFunc->assumeNoFunctionFP();
+    // simFunc->assumeNoFunctionFP();
     exitFunc->addArgument(imageKey);
 
     p = addInstrumentationPoint(getProgramExitBlock(), exitFunc, InstrumentationMode_tramp);
@@ -579,8 +579,12 @@ void CacheSimulation::instrument(){
                     // sr3 holds the memory address being used by memop
                      // put the 4 elements of a BufferEntry into place
  
-                    loadstoreflag=(memop->isLoad());                   
-                    printf("\n\t loadstoreflag: %d",loadstoreflag);
+                    loadstoreflag=(memop->isLoad());//(memop->isLoad());   
+                    loadstoreflag=loadstoreflag<<1;   
+                   // printf("\n\t  loadstoreflag: %d ",loadstoreflag);            
+                    //loadstoreflag|= 0b10;
+                    loadstoreflag|=(memop->isStore());
+                    printf("\n\t memop->isLoad(): %d  emop->isStore(): %d loadstoreflag: %d",memop->isLoad(),memop->isStore(),loadstoreflag);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
