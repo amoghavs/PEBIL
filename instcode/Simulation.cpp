@@ -252,12 +252,9 @@ extern "C" {
                 debug(assert(AllData->CountThreads() > 1));
                 continue;
             }
-            
-           
-            
-	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
-	   // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
-	    HitStatus<<"\n\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
+ 	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
+	    // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
+	    // HitStatus<<"\n\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
  	    ReuseEntry entry = ReuseEntry();
@@ -1682,53 +1679,18 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     // hit
     if (Search(store, &set, &lineInSet)){
         // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
-        uint32_t BothLoadStore= (loadstoreflag&0b11);
-	//cout<<"\n\t loadstoreflag: %d "<<loadstoreflag<<" level "<<level;
-	uint32_t uptoLevel;
-        if(level)
-        	uptoLevel=(level-1);
+        stats->Stats[memid][level].hitCount++;
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
         else
-        	uptoLevel=level;	
-        if(BothLoadStore==0b11)
-        {
-		for(uint32_t i=0;i<uptoLevel;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load
-			stats->Stats[memid][i].missCount++; // Once for store		
-		}
-		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-		stats->Stats[memid][level].loadCount++;
-		stats->Stats[memid][level].storeCount++;
-		stats->Stats[memid][level].hitCount++; // Once for store	
-		stats->Stats[memid][level].hitCount++; //  Once for load
-        }
-        else
-        {
-	        stats->Stats[memid][level].hitCount++; // Once for load/store 
-
-	        //cout<<"\n\t Take it: "<<level<<" (level-1) "<<(level-1);
-		for(int i=0;i<uptoLevel;i++)
-		{
-			//cout<<"\n\t Updating miss at Level:  "<<i;
-			stats->Stats[memid][i].missCount++; // Once for load/store 
-		}	        
-		if(loadstoreflag&0b10)
-		{
-			HitStatus<<"\n\t Must be updating LOAD at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][level].loadCount++;
-		}
-		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
-		{
-			 HitStatus<<"\n\t Must be updating STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][level].storeCount++;
-		}      
-        }  
-        MarkUsed(set, lineInSet); // CAUTION: WILL THIS AFFECT COUNTING A L/S as two different access.
+        	stats->Stats[memid][level].storeCount++;
+        MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
+
     // miss
 
-    //stats->Stats[memid][level].missCount++;
+    stats->Stats[memid][level].missCount++;
     Replace(store, set, LineToReplace(set));
     // HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
     return level + 1;
@@ -1765,49 +1727,12 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
 
     // hit
     if (Search(store, &set, &lineInSet)){
-        uint32_t BothLoadStore= (loadstoreflag&0b11);
-	//cout<<"\n\t loadstoreflag: %d "<<loadstoreflag<<" level "<<level;
-	uint32_t uptoLevel;
-        if(level)
-        	uptoLevel=(level-1);
+        stats->Stats[memid][level].hitCount++;
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
         else
-        	uptoLevel=level;	
-        if(BothLoadStore==0b11)
-        {
-		for(uint32_t i=0;i<uptoLevel;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load
-			stats->Stats[memid][i].missCount++; // Once for store		
-		}
-		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-		stats->Stats[memid][level].loadCount++;
-		stats->Stats[memid][level].storeCount++;
-		stats->Stats[memid][level].hitCount++; // Once for store	
-		stats->Stats[memid][level].hitCount++; //  Once for load
-        }
-        else
-        {
-	        stats->Stats[memid][level].hitCount++; // Once for load/store 
-
-	        //cout<<"\n\t Take it: "<<level<<" (level-1) "<<(level-1);
-		for(int i=0;i<uptoLevel;i++)
-		{
-			//cout<<"\n\t Updating miss at Level:  "<<i;
-			stats->Stats[memid][i].missCount++; // Once for load/store 
-		}	        
-		if(loadstoreflag&0b10)
-		{
-			HitStatus<<"\n\t Must be updating LOAD at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][level].loadCount++;
-		}
-		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
-		{
-			 HitStatus<<"\n\t Must be updating STORE at the level: "<<level<<" for a hit for "<<addr<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][level].storeCount++;
-		}      
-        }  
-
-        MarkUsed(set, lineInSet);
+        	stats->Stats[memid][level].storeCount++;
+         MarkUsed(set, lineInSet);
 
         e->level = level;
         e->addr = store;
@@ -1821,7 +1746,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     }
 
     // miss
-   // stats->Stats[memid][level].missCount++;
+    stats->Stats[memid][level].missCount++;
 
     if (level == LastExclusive){
         e->level = LastExclusive + 1;
@@ -2101,47 +2026,24 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
+    //if(stats->HasMemId(access->memseq))
+        //cout<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
+    //else
+    	//cout<<"\n\t Storm is coming since Capacity is: "<<stats->Capacity<<" and memseq is "<<access->memseq<<" !!! \n";
     while (next < levelCount){
-        HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
+        //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
         
     }
 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
-        uint64_t memid=access->memseq;
-        uint64_t loadstoreflag=access->loadstoreflag;
-        uint32_t BothLoadStore= (loadstoreflag&0b11);
-        
-        if(BothLoadStore==0b11)
-        {
-		for(uint32_t i=0;i<levelCount;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load
-			stats->Stats[memid][i].missCount++; // Once for store		
-		}
-		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-		stats->Stats[memid][levelCount-1].loadCount++;
-		stats->Stats[memid][levelCount-1].storeCount++;
-        }
-        else
-        {
-		for(uint32_t i=0;i<levelCount;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load/store 
-		}	        
-		if(loadstoreflag&0b10)
-		{
-			HitStatus<<"\n\t Must be updating LOAD at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][levelCount-1].loadCount++;
-		}
-		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
-		{
-			 HitStatus<<"\n\t Must be updating STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][levelCount-1].storeCount++;
-		}      
-        } 	
-    }
+     if(access->loadstoreflag&0b01)
+    	stats->Stats[access->memseq][levelCount-1].loadCount++;
+     else
+    	stats->Stats[access->memseq][levelCount-1].storeCount++;   
+    }  
+     
 }
 
 void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
@@ -2161,39 +2063,11 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
     	CheckRange(stats,victim,access->memseq);
-        uint64_t memid=access->memseq;
-        uint64_t loadstoreflag=access->loadstoreflag;
-        uint32_t BothLoadStore= (loadstoreflag&0b11);
-        
-        if(BothLoadStore==0b11)
-        {
-		for(uint32_t i=0;i<levelCount;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load
-			stats->Stats[memid][i].missCount++; // Once for store		
-		}
-		HitStatus<<"\n\t Must be updating LOAD and STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-		stats->Stats[memid][levelCount-1].loadCount++;
-		stats->Stats[memid][levelCount-1].storeCount++;
-        }
+        if(access->loadstoreflag)
+    		stats->Stats[access->memseq][levelCount-1].loadCount++;
         else
-        {
-		for(uint32_t i=0;i<levelCount;i++)
-		{
-			stats->Stats[memid][i].missCount++; // Once for load/store 
-		}	        
-		if(loadstoreflag&0b10)
-		{
-			HitStatus<<"\n\t Must be updating LOAD at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][levelCount-1].loadCount++;
-		}
-		if(loadstoreflag&0b01) // CAN get away with using "else" since at this part of "else-case" it cannot be both load&store.
-		{
-			 HitStatus<<"\n\t Must be updating STORE at the level: "<<levelCount<<" for a hit for "<<victim<<" LSFlag: "<<loadstoreflag;
-			stats->Stats[memid][levelCount-1].storeCount++;
-		}      
-        } 
-    }
+    		stats->Stats[access->memseq][levelCount-1].storeCount++;   
+    } 
 }
 
 void CacheHybridStructureHandler::ExtractAddresses()
@@ -2350,6 +2224,7 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     bzero(stats->Stats, sizeof(StreamStats*) * CountMemoryHandlers);
     for (uint32_t i = 0; i < CountCacheStructures; i++){
  		CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
+ 		cout<<"\n\t c->sysId "<<c->sysId<<" stats->InstructionCount "<<stats->InstructionCount;
 		stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount, c->HybridCache);
     }
     stats->Stats[RangeHandlerIndex] = new RangeStats(s->InstructionCount);

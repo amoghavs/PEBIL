@@ -193,7 +193,10 @@ void CacheSimulation::instrument(){
             for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
                 X86Instruction* memop = bb->getInstruction(j);
                 if (memop->isMemoryOperation()){
-                    memopSeq++;
+                    if(memop->isLoad())
+                    	memopSeq++;
+                    if(memop->isStore())
+                    	memopSeq++;                    	
                    // printf("\n\t This is a memop with prog-id: %d , isStore(): %d isLoad(): %d ",memop->getProgramAddress(), memop->isStore(),memop->isLoad());
                 }
             }
@@ -327,6 +330,8 @@ void CacheSimulation::instrument(){
     memopSeq = 0;
     uint32_t currentLeader = 0;
     uint64_t loadstoreflag;    
+    uint64_t loadflag;
+    uint64_t storeflag;
     for (uint32_t i = 0; i < getNumberOfExposedBasicBlocks(); i++){
         BasicBlock* bb = getExposedBasicBlock(i);
         Function* f = (Function*)bb->getLeader()->getContainer();
@@ -493,13 +498,29 @@ void CacheSimulation::instrument(){
                         }
                     }
 
+		    loadflag=(memop->isLoad());
+		    storeflag=(memop->isStore());
+		    loadstoreflag=(loadflag&&storeflag);
+		    int RepeatLoop=0,RepeatLoopIdx=0;
+		    if(loadstoreflag)
+		    	RepeatLoop=2;
+		    else
+		    	RepeatLoop=1;
+		   // printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);		    
+		    for(RepeatLoopIdx=0;RepeatLoopIdx<RepeatLoop;RepeatLoopIdx++)
+		    {
+		    	if(RepeatLoopIdx)
+		    		loadstoreflag=0; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
+		    	else
+		    		loadstoreflag=loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
+
                     // at every memop, fill a buffer entry
                     InstrumentationSnippet* snip = addInstrumentationSnippet();
                     InstrumentationPoint* pt = addInstrumentationPoint(memop, snip, InstrumentationMode_trampinline, InstLocation_prior);
                     pt->setPriority(InstPriority_low);
                     dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_bufferfill), true);
 
-                    // grab 3 scratch registers
+                     // grab 3 scratch registers
                     uint32_t sr1 = X86_REG_INVALID, sr2 = X86_REG_INVALID, sr3 = X86_REG_INVALID;
 
                     BitSet<uint32_t>* inv = new BitSet<uint32_t>(X86_ALU_REGS);
@@ -565,7 +586,8 @@ void CacheSimulation::instrument(){
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
                     // sr3 holds the offset (in bytes) of the access
-
+		   
+		   // printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq) ;
                     ASSERT(memopIdInBlock < bb->getNumberOfMemoryOps());
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));
@@ -579,12 +601,12 @@ void CacheSimulation::instrument(){
                     // sr3 holds the memory address being used by memop
                      // put the 4 elements of a BufferEntry into place
  
-                    loadstoreflag=(memop->isLoad());//(memop->isLoad());   
-                    loadstoreflag=loadstoreflag<<1;   
+                    //loadstoreflag=(memop->isLoad());//(memop->isLoad());   
+                    //loadstoreflag=loadstoreflag<<1;   
                    // printf("\n\t  loadstoreflag: %d ",loadstoreflag);            
                     //loadstoreflag|= 0b10;
-                    loadstoreflag|=(memop->isStore());
-                    printf("\n\t memop->isLoad(): %d  emop->isStore(): %d loadstoreflag: %d",memop->isLoad(),memop->isStore(),loadstoreflag);
+                    //loadstoreflag|=(memop->isStore());
+                    //printf("\n\t memop->isLoad(): %d  memop->isStore(): %d loadstoreflag: %d",memop->isLoad(),memop->isStore(),loadstoreflag);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
@@ -670,6 +692,7 @@ void CacheSimulation::instrument(){
 
                     memopIdInBlock++;
                     memopSeq++;
+                    }
                 }
             }
             blockSeq++;
