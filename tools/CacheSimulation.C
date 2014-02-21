@@ -136,7 +136,7 @@ CacheSimulation::CacheSimulation(ElfFile* elf)
     entryFunc = NULL;
 
   //  ASSERT(isPowerOfTwo(sizeof(BufferEntry)));
-   printf("\n\t FYI: sizeof(BufferEntry) is not checked for being power of two!!! \n");
+  // printf("\n\t FYI: sizeof(BufferEntry) is not checked for being power of two!!! \n");
 }
 
 
@@ -506,18 +506,13 @@ void CacheSimulation::instrument(){
 		    	RepeatLoop=2;
 		    else
 		    	RepeatLoop=1;
-		    printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);		    
+		   // printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);		    
 		    for(RepeatLoopIdx=0;RepeatLoopIdx<RepeatLoop;RepeatLoopIdx++)
 		    {
 		    	if(RepeatLoopIdx)
-		    		loadstoreflag=0b10; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
+		    		loadstoreflag=0; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
 		    	else
-		    	{
-		    		if(loadflag&storeflag)
-		    			loadstoreflag=0b10|loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
-		    		else
-		    			loadstoreflag=loadflag;
-		    	}
+		    		loadstoreflag=loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
 
                     // at every memop, fill a buffer entry
                     InstrumentationSnippet* snip = addInstrumentationSnippet();
@@ -591,7 +586,8 @@ void CacheSimulation::instrument(){
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
                     // sr3 holds the offset (in bytes) of the access
-		    printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq) ;
+		   
+		   // printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq) ;
                     ASSERT(memopIdInBlock < bb->getNumberOfMemoryOps());
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));

@@ -59,7 +59,6 @@ static uint32_t SpatialWindow = 0;
 static uint32_t SpatialBin = 0;
 static uint32_t SpatialNMAX = 0;
 
-static uint32_t loadstorecount=0;
 //
 
 // global data
@@ -256,11 +255,6 @@ extern "C" {
  	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
 	    // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
 	    // HitStatus<<"\n\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
-	    if(reference->loadstoreflag&0b10)
-	    {
-	    	loadstorecount++;
-	    	//cout<<"\n\t LoadStoreCount: "<<loadstorecount<<" LSflag: "<<(reference->loadstoreflag);
-	    }
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
  	    ReuseEntry entry = ReuseEntry();
@@ -335,7 +329,6 @@ extern "C" {
 		if(SpatialWindow)
 	               sd = stats->RHandlers[SpatialHandlerIndex];
                 ProcessBuffer(i, m, rd, sd, numElements, iid, tid);
-                HitStatus<<"\t Refresh! \n";
             }
         } 
         }
@@ -491,7 +484,7 @@ extern "C" {
 
         inform << "Printing cache simulation results to " << fileName << ENDL;
         TryOpen(MemFile, fileName);
-	inform<<"\t Load store count "<<loadstorecount<<ENDL;
+
 
         if (ReuseWindow){
    
@@ -730,7 +723,7 @@ extern "C" {
                         if (root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] != 0){
                             inform << "bbid " << dec << bbid << " image " << hex << (*iit) << " accesses " << dec << root->GetAccessCount(bbid) << " memops " << st->MemopsPerBlock[bbid] << ENDL;
                         }
-                        //assert(root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] == 0);
+                        assert(root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] == 0);
                     }
 
                     uint32_t idx;
@@ -1980,24 +1973,20 @@ bool CacheStructureHandler::Init(string desc){
 	            HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
 	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
 	            levels[levelId] = (CacheLevel*)l;
-	            cout<<"\n\t HighlyAssociativeExclusiveCacheLevel \n";
 	        } else {
 	            HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
 	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
 	            levels[levelId] = (CacheLevel*)l;
-	            cout<<"\n\t HighlyAssociativeInclusiveCacheLevel \n";
 	        }
 	    } else {
 	        if (firstExcl != INVALID_CACHE_LEVEL){
 	            ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
 	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl, firstExcl, levelCount - 1);
 	            levels[levelId] = l;
-	            cout<<"\n\t ExclusiveCacheLevel \n";
 	        } else {
 	            InclusiveCacheLevel* l = new InclusiveCacheLevel();
 	            l->Init(levelId, sizeInBytes, assoc, lineSize, repl);
 	            levels[levelId] = l;
-	            cout<<"\n\t InclusiveCacheLevel \n";
 	        }
 	    }
 	}
@@ -2032,12 +2021,8 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
-    //if(stats->HasMemId(access->memseq))
-        //cout<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
-    //else
-    	//cout<<"\n\t Storm is coming since Capacity is: "<<stats->Capacity<<" and memseq is "<<access->memseq<<" !!! \n";
-
-    while (next < levelCount){
+  
+      while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
         
@@ -2063,7 +2048,7 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     evictInfo.level = INVALID_CACHE_LEVEL;
     while (next < levelCount){
          next = levels[next]->Process(stats, access->memseq, victim,access->loadstoreflag, (void*)(&evictInfo));
-         HitStatus<<"\n\t 2. Presence check for address "<<victim;
+        // HitStatus<<"\n\t 2. Presence check for address "<<victim;
     }
   
     	 
@@ -2120,7 +2105,7 @@ void CacheHybridStructureHandler::ExtractAddresses()
     if( (HybridAddressCount%2!=0) || (HybridAddressCount==0))
     {
     	HitStatus<<"\n\t HybridAddressCount: "<<HybridAddressCount<<" is illegal!! ";
-    	HitStatus<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
+    	warn<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
     	
     }
     
@@ -2192,7 +2177,7 @@ bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uin
 			hits+=1;
 			AddressNotFound= false;
 			stats->HybridMemStats[memid].hitCount++; //=1;
-			HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a hit!! \n";
+			//HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a hit!! \n";
 		}
 	
 	}
@@ -2200,7 +2185,7 @@ bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uin
 	{
 		misses+=1;
 		stats->HybridMemStats[memid].missCount++; //=1;
-			HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a miss!! \n";		
+			//HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a miss!! \n";		
 	}
 	return true; // CAUTION: No known use of returning 'bool'!! 
 
@@ -2231,7 +2216,6 @@ SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_
     bzero(stats->Stats, sizeof(StreamStats*) * CountMemoryHandlers);
     for (uint32_t i = 0; i < CountCacheStructures; i++){
  		CacheStructureHandler* c = (CacheStructureHandler*)MemoryHandlers[i];
- 		cout<<"\n\t c->sysId "<<c->sysId<<" stats->InstructionCount "<<stats->InstructionCount;
 		stats->Stats[i] = new CacheStats(c->levelCount, c->sysId, stats->InstructionCount, c->HybridCache);
     }
     stats->Stats[RangeHandlerIndex] = new RangeStats(s->InstructionCount);
