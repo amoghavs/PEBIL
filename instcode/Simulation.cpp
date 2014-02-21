@@ -59,6 +59,7 @@ static uint32_t SpatialWindow = 0;
 static uint32_t SpatialBin = 0;
 static uint32_t SpatialNMAX = 0;
 
+static uint32_t loadstorecount=0;
 //
 
 // global data
@@ -255,6 +256,11 @@ extern "C" {
  	    // HitStatus<<"\n\t Initiating processing of "<<reference->address<<"\t memseq "<<reference->memseq;
 	    // cout<<"\n\t Address: "<<(reference->address)<<" Memseq: "<<(reference->memseq)<<" ImageID: "<<(reference->imageid)<<" ThreadID: "<<(reference->threadid)<<" tid: "<<tid<<" LoadStoreFlag "<<(reference->loadstoreflag);
 	    // HitStatus<<"\n\n\t Processing initiated for address: "<<reference->address<<" with LSflag: "<<reference->loadstoreflag;
+	    if(reference->loadstoreflag&0b10)
+	    {
+	    	loadstorecount++;
+	    	//cout<<"\n\t LoadStoreCount: "<<loadstorecount<<" LSflag: "<<(reference->loadstoreflag);
+	    }
 	    m->Process((void*)ss, reference);
             assert(reference->threadid == tid);
  	    ReuseEntry entry = ReuseEntry();
@@ -485,7 +491,7 @@ extern "C" {
 
         inform << "Printing cache simulation results to " << fileName << ENDL;
         TryOpen(MemFile, fileName);
-
+	inform<<"\t Load store count "<<loadstorecount<<ENDL;
 
         if (ReuseWindow){
    
@@ -724,7 +730,7 @@ extern "C" {
                         if (root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] != 0){
                             inform << "bbid " << dec << bbid << " image " << hex << (*iit) << " accesses " << dec << root->GetAccessCount(bbid) << " memops " << st->MemopsPerBlock[bbid] << ENDL;
                         }
-                        assert(root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] == 0);
+                        //assert(root->GetAccessCount(bbid) % st->MemopsPerBlock[bbid] == 0);
                     }
 
                     uint32_t idx;
@@ -2030,6 +2036,7 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
         //cout<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
     //else
     	//cout<<"\n\t Storm is coming since Capacity is: "<<stats->Capacity<<" and memseq is "<<access->memseq<<" !!! \n";
+
     while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
