@@ -234,8 +234,11 @@ protected:
     uint32_t linesizeBits;
 
     uint64_t** contents;
+    bool**  dirtystatus;
     uint32_t* recentlyUsed;
     history** historyUsed;
+    bool toRetire;
+    vector<uint64_t>* toRetireAddresses;
 
 public:
     CacheLevel();
@@ -264,10 +267,17 @@ public:
     virtual bool Search(uint64_t addr, uint32_t* set, uint32_t* lineInSet);
     virtual uint64_t Replace(uint64_t addr, uint32_t setid, uint32_t lineid);
 
+
     // re-implemented by Exclusive/InclusiveCacheLevel
     virtual uint32_t Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
     virtual const char* TypeString() = 0;
     virtual void Init (CacheLevel_Init_Interface);
+    
+    virtual void SetDirty(uint32_t setid, uint32_t lineid);
+    virtual void ResetDirty(uint32_t setid, uint32_t lineid);
+    virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
+    virtual void RetireDirty(CacheStats* stats,uint32_t memid,uint32_t levelCount,void* info); // void* info is needed since eventually 'Process' needs to be called! 
+    virtual bool GetRetireStatus();
 };
 
 class InclusiveCacheLevel : public virtual CacheLevel {

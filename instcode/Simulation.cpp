@@ -625,7 +625,10 @@ extern "C" {
                         uint64_t l = c->GetLoads(lvl);
                         uint64_t s = c->GetStores(lvl);
                         uint64_t t = l + s;
-                        MemFile << " l" << dec << lvl << "[" << l << "/" << t <<"] ";//<< "(" << (l/t)<<")] ";
+                        double ratio=0.0f;
+                        if(t)
+                          ratio=l/t;
+                        MemFile << " l" << dec << lvl << "[" << l << "/" << t << "(" << (ratio)<<")] ";
                     }
                     
                     MemFile << ENDL;
@@ -634,12 +637,7 @@ extern "C" {
             MemFile << ENDL;
         }
 
-        MemFile 
-            << "# " << "BLK" << TAB << "Sequence" << TAB << "Hashcode" << TAB << "ImageSequence" << TAB << "ThreadId"
-            << TAB << "BlockCounter" << TAB << "InstructionSimulated" << TAB << "MinAddress" << TAB << "MaxAddress" << TAB << "AddrRange"
-            << ENDL;
-        MemFile
-            << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << TAB << "LoadCount" << TAB << "StoreCount" << ENDL;
+
 
         for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
             for (set<thread_key_t>::iterator it = AllData->allthreads.begin(); it != AllData->allthreads.end(); it++){
@@ -705,10 +703,24 @@ extern "C" {
                 }
 
 		uint32_t* HybridCacheStatus=(uint32_t*)malloc( CountCacheStructures * sizeof(uint32_t) );
+		bool PrintHybridFormat=false;
 		for (uint32_t sys = 0; sys < CountCacheStructures; sys++){
 			CacheStructureHandler* CheckHybridStructure= (CacheStructureHandler*)stats->Handlers[sys];
 			HybridCacheStatus[sys]=CheckHybridStructure->HybridCache;
+			if(PrintHybridFormat)
+				PrintHybridFormat=true;
+			
 		}
+		
+		MemFile 
+		    << "# " << "BLK" << TAB << "Sequence" << TAB << "Hashcode" << TAB << "ImageSequence" << TAB << "ThreadId"
+		    << TAB << "BlockCounter" << TAB << "InstructionSimulated" << TAB << "MinAddress" << TAB << "MaxAddress" << TAB << "AddrRange"
+		    << ENDL;    
+		MemFile
+		    << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << TAB << "LoadCount" << TAB << "StoreCount" << ENDL;		
+		//if( PrintHybridFormat )
+		//	MemFile << TAB << " ** Hybrid File ** " << TAB << " HitCount in RAM (In Address Range ) " << " HitCount in NVM " << 
+		
                 CacheStats* root = aggstats[0];
                 for (uint32_t bbid = 0; bbid < root->Capacity; bbid++){
 
@@ -761,14 +773,24 @@ extern "C" {
                               << TAB << dec << c->GetLoads(bbid,lvl)
                               << TAB << dec << c->GetStores(bbid,lvl)
                               << ENDL;
+                              
                         }
-                           
+			                           
                            if(HybridCacheStatus[sys])
                            {
                            	CacheHybridStructureHandler* CHSH=(CacheHybridStructureHandler*)stats->Handlers[sys] ;
-                           	MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<" bbid: "<<bbid<<" hits: "<<c->GetHybridHits(bbid)<<" misses: "<<c->GetHybridMisses(bbid)<<ENDL;
+                           	//MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<" bbid: "<<bbid<<" hits: "<<c->GetHybridHits(bbid)<<" misses: "<<c->GetHybridMisses(bbid)<<ENDL;
+                           	
+                              MemFile << TAB << dec << c->SysId
+		                      << TAB << dec << (c->LevelCount)
+		                      << TAB << dec << c->GetHybridHits(bbid)
+		                      << TAB << dec << c->GetHybridMisses(bbid)
+		                      << TAB << dec << c->GetLoads(bbid,c->LevelCount-1)
+		                      << TAB << dec << c->GetStores(bbid,c->LevelCount-1)
+		                      << ENDL;
                            	
                            }
+                        MemFile<<ENDL;
                          
                     }
                 }
@@ -1464,6 +1486,7 @@ void CacheLevel::Init(CacheLevel_Init_Interface){
     associativity = assoc;
     linesize = lineSz;
     replpolicy = pol;
+    toRetire=false;
 
     countsets = size / (linesize * associativity);
 
@@ -1475,9 +1498,13 @@ void CacheLevel::Init(CacheLevel_Init_Interface){
     linesizeBits--;
 
     contents = new uint64_t*[countsets];
+    dirtystatus= new bool*[countsets];
     for (uint32_t i = 0; i < countsets; i++){
         contents[i] = new uint64_t[associativity];
         memset(contents[i], 0, sizeof(uint64_t) * associativity);
+        
+        dirtystatus[i]=new bool[associativity];
+        memset(dirtystatus[i],0, sizeof(bool) * associativity );
     }
 
     recentlyUsed = NULL;
@@ -1600,6 +1627,14 @@ uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
     uint64_t prev = contents[setid][lineid];
     contents[setid][lineid] = store;
     MarkUsed(setid, lineid);
+    
+    if(GetDirtyStatus(setid,lineid)) 
+    {
+    	toRetire=true;
+    	toRetireAddresses->push_back(prev);
+    }
+    // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag.
+    ResetDirty(setid,lineid);
     return prev;
 }
 
@@ -1667,94 +1702,7 @@ bool CacheLevel::MultipleLines(uint64_t addr, uint32_t width){
     return false;
 }
 
-uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
-    uint32_t set = 0, lineInSet = 0;
-    uint64_t store = GetStorage(addr);
-    	
-    debug(assert(stats));
-    debug(assert(stats->Stats));
-    debug(assert(stats->Stats[memid]));
-    // HitStatus<<"\n\t 1. Processing: "<<addr<<" memid: "<<memid;
-    // hit
-    if (Search(store, &set, &lineInSet)){
-        // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
-        stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag&0b01)
-        	stats->Stats[memid][level].loadCount++;
-        else
-        	stats->Stats[memid][level].storeCount++;
-        MarkUsed(set, lineInSet);
-        return INVALID_CACHE_LEVEL;
-    }
 
-    // miss
-
-    stats->Stats[memid][level].missCount++;
-    Replace(store, set, LineToReplace(set));
-    // HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
-    return level + 1;
-}
-
-uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
-    uint32_t set = 0;
-    uint32_t lineInSet = 0;
-
-    uint64_t store = GetStorage(addr);
-	// HitStatus<<"\n\t 2. Processing: "<<addr;
-    // handle victimizing
-    EvictionInfo* e = (EvictionInfo*)info; 
-    if (e->level != INVALID_CACHE_LEVEL){
-
-        set = GetSet(e->addr);
-        lineInSet = LineToReplace(set);
-
-        // use the location of the replaced line if the eviction happens to go to the same set
-        if (level == e->level){
-            if (e->setid == set){
-                lineInSet = e->lineid;
-            }
-        }
-
-        e->addr = Replace(e->addr, set, lineInSet);
-
-        if (level == e->level){
-            return INVALID_CACHE_LEVEL;
-        } else {
-            return level + 1;
-        }
-    }
-
-    // hit
-    if (Search(store, &set, &lineInSet)){
-        stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag&0b01)
-        	stats->Stats[memid][level].loadCount++;
-        else
-        	stats->Stats[memid][level].storeCount++;
-         MarkUsed(set, lineInSet);
-
-        e->level = level;
-        e->addr = store;
-        e->setid = set;
-        e->lineid = lineInSet;
-
-        if (level == FirstExclusive){
-            return INVALID_CACHE_LEVEL;
-        }
-        return FirstExclusive;
-    }
-
-    // miss
-    stats->Stats[memid][level].missCount++;
-
-    if (level == LastExclusive){
-        e->level = LastExclusive + 1;
-        e->addr = store;
-
-        return FirstExclusive;
-    }
-    return level + 1;
-}
 
 MemoryStreamHandler::MemoryStreamHandler(){
     pthread_mutex_init(&mlock, NULL);
@@ -2013,6 +1961,138 @@ CacheStructureHandler::~CacheStructureHandler(){
     }
 }
 
+void CacheLevel::SetDirty(uint32_t setid, uint32_t lineid){
+	dirtystatus[setid][lineid]=true;
+}
+
+void CacheLevel::ResetDirty(uint32_t setid, uint32_t lineid){
+	dirtystatus[setid][lineid]=false;
+}
+
+bool CacheLevel::GetDirtyStatus(uint32_t setid, uint32_t lineid){
+	return dirtystatus[setid][lineid];
+}
+
+uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
+    uint32_t set = 0, lineInSet = 0;
+    uint64_t store = GetStorage(addr);
+    	
+    debug(assert(stats));
+    debug(assert(stats->Stats));
+    debug(assert(stats->Stats[memid]));
+    // HitStatus<<"\n\t 1. Processing: "<<addr<<" memid: "<<memid;
+    // hit
+    if (Search(store, &set, &lineInSet)){
+        // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
+        stats->Stats[memid][level].hitCount++;
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
+        else
+        {
+        	stats->Stats[memid][level].storeCount++;
+        	SetDirty(set,lineInSet);
+        }
+        MarkUsed(set, lineInSet);
+        return INVALID_CACHE_LEVEL;
+    }
+
+    // miss
+
+    stats->Stats[memid][level].missCount++;
+    Replace(store, set, LineToReplace(set));
+    // HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
+    return level + 1;
+}
+
+
+
+uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
+    uint32_t set = 0;
+    uint32_t lineInSet = 0;
+
+    uint64_t store = GetStorage(addr);
+	 HitStatus<<"\n\t 2. Processing: "<<addr;
+    // handle victimizing
+    EvictionInfo* e = (EvictionInfo*)info; 
+    if (e->level != INVALID_CACHE_LEVEL){
+
+        set = GetSet(e->addr);
+        lineInSet = LineToReplace(set);
+
+        // use the location of the replaced line if the eviction happens to go to the same set
+        if (level == e->level){
+            if (e->setid == set){
+                lineInSet = e->lineid;
+            }
+        }
+
+        e->addr = Replace(e->addr, set, lineInSet);
+
+        if (level == e->level){
+            return INVALID_CACHE_LEVEL;
+        } else {
+            return level + 1;
+        }
+    }
+
+    // hit
+    if (Search(store, &set, &lineInSet)){
+        stats->Stats[memid][level].hitCount++;
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
+        else
+        	stats->Stats[memid][level].storeCount++;
+         MarkUsed(set, lineInSet);
+
+        e->level = level;
+        e->addr = store;
+        e->setid = set;
+        e->lineid = lineInSet;
+	//HitStatus<<"\n\t "
+        if (level == FirstExclusive){
+            return INVALID_CACHE_LEVEL;
+        }
+        return FirstExclusive;
+    }
+
+    // miss
+    stats->Stats[memid][level].missCount++;
+
+    if (level == LastExclusive){
+        e->level = LastExclusive + 1;
+        e->addr = store;
+
+        return FirstExclusive;
+    }
+    return level + 1;
+}
+
+void CacheLevel::RetireDirty(CacheStats* stats,uint32_t memid,uint32_t levelCount,void* info)
+{
+	cout<<"\n\t Woohoo finally I am here!! \n";
+	uint32_t i=0;
+	uint64_t victim;
+	uint64_t retireNext;
+	while(toRetireAddresses->size())
+	{
+		retireNext=level+1;
+		victim=toRetireAddresses->back();
+		toRetireAddresses->pop_back();
+		while( retireNext < levelCount ) // This is probably overcomplicating since inclusive cache ==> contents(Cn) is a subset of contents(C(n+1))
+	    	{
+			retireNext=Process(stats,memid,victim,0,(void*)info);
+	   	}    
+  	}
+	toRetire=false;
+	
+	return;
+}
+
+bool CacheLevel::GetRetireStatus()
+{
+	return toRetire;
+}
+
 void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     uint32_t next = 0;
     uint64_t victim = access->address;
@@ -2021,12 +2101,25 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
-  
+    uint32_t retireNext=0;
+    uint32_t tmpNext=0;
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
+        tmpNext=next; // Need to check whether the current 'next' has eligible candidates to be retired!
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
-        
+        if(levels[tmpNext]->GetRetireStatus())
+        {
+        	// This is probably overcomplicating since inclusive cache ==> contents(Cache(n)) is a subset of contents(Cache(n+1))
+        	// The for/while loop is needed if, 'dirty-victim' from Cache(n) is not found in Cache(n+1) and another 'dirty-victim-1' from Cache(n+1) pops up and eventually needs to be treated!
+  
+        	if( (next) < (levelCount) ) // To ensure that levels[next]-> can be called from RetireDirty!!
+        		levels[tmpNext]->RetireDirty(stats, access->memseq,levelCount,(void*)(&evictInfo));
+        		
+		 //else Implies there is a dirty line at LLC! Need to be handelled at HybridCache!
+   	}
     }
+    
+
 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
