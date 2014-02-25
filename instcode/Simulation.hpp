@@ -282,10 +282,9 @@ public:
     virtual void ResetDirty(uint32_t setid, uint32_t lineid);
     virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
     virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint32_t levelCount,void* info); // void* info is needed since eventually 'Process' needs to be called! 
-    virtual bool EvictPrevLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info); // void* info is needed since eventually 'Process' needs to be called!
     virtual uint64_t EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
     virtual bool GetEvictStatus();
-    virtual uint64_t  IReplace(uint64_t addr, uint64_t store, uint32_t setid, uint32_t lineid);
+
 };
 
 class InclusiveCacheLevel : public virtual CacheLevel {
