@@ -1486,7 +1486,9 @@ void CacheLevel::Init(CacheLevel_Init_Interface){
     associativity = assoc;
     linesize = lineSz;
     replpolicy = pol;
-    toRetire=false;
+    toEvict=false;
+    toEvictAddresses=new vector<uint64_t>;
+    //levelCount=
 
     countsets = size / (linesize * associativity);
 
@@ -1622,17 +1624,32 @@ uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, ui
     return prev;
 }
 
-uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
-   // HitStatus<<"\n\t Orders to replace set: "<<setid<<" line: "<<lineid<<" with "<<store;
+uint64_t CacheLevel::IReplace(uint64_t addr, uint64_t store, uint32_t setid, uint32_t lineid){
+ 
     uint64_t prev = contents[setid][lineid];
     contents[setid][lineid] = store;
     MarkUsed(setid, lineid);
-    
+ 
     if(GetDirtyStatus(setid,lineid)) 
     {
-    	toRetire=true;
-    	toRetireAddresses->push_back(prev);
+    	toEvict=true;
+    	toEvictAddresses->push_back(prev);
     }
+    // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag.
+    ResetDirty(setid,lineid);
+    return prev;
+}
+
+uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
+    uint64_t prev = contents[setid][lineid];
+    contents[setid][lineid] = store;
+    MarkUsed(setid, lineid);
+ 
+    if(GetDirtyStatus(setid,lineid)) 
+    {
+    	toEvict=true;
+    	toEvictAddresses->push_back(prev);
+     }
     // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag.
     ResetDirty(setid,lineid);
     return prev;
@@ -1741,22 +1758,26 @@ CacheStructureHandler::CacheStructureHandler(CacheStructureHandler& h){
             InclusiveCacheLevel* l = new InclusiveCacheLevel();
             l->Init(Extract_Level_Args(i));
             levels[i] = l;
+            l->SetLevelCount(levelCount);
         } else if (LVLF(i, Type()) == CacheLevelType_InclusiveHighassoc){
             HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
             l->Init(Extract_Level_Args(i));
             levels[i] = l;
+            l->SetLevelCount(levelCount);
         } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveLowassoc){
             ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
             ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
             assert(p->GetType() == CacheLevelType_ExclusiveLowassoc);
             l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
             levels[i] = l;
+            l->SetLevelCount(levelCount);            
         } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveHighassoc){
             HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
             ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
             assert(p->GetType() == CacheLevelType_ExclusiveHighassoc);
             l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
             levels[i] = l;
+            l->SetLevelCount(levelCount);            
         } else {
             assert(false);
         }
@@ -1980,10 +2001,8 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
-    // HitStatus<<"\n\t 1. Processing: "<<addr<<" memid: "<<memid;
-    // hit
+
     if (Search(store, &set, &lineInSet)){
-        // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
         stats->Stats[memid][level].hitCount++;
         if(loadstoreflag&0b01)
         	stats->Stats[memid][level].loadCount++;
@@ -1999,8 +2018,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     // miss
 
     stats->Stats[memid][level].missCount++;
-    Replace(store, set, LineToReplace(set));
-    // HitStatus<<"\n\t Its a miss for "<<addr<<" and should be returning "<<(level+1)<<"!! \n";
+    IReplace(addr,store, set, LineToReplace(set));
     return level + 1;
 }
 
@@ -2067,30 +2085,104 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     return level + 1;
 }
 
-void CacheLevel::RetireDirty(CacheStats* stats,uint32_t memid,uint32_t levelCount,void* info)
+bool CacheLevel::EvictPrevLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info)
 {
-	cout<<"\n\t Woohoo finally I am here!! \n";
-	uint32_t i=0;
-	uint64_t victim;
-	uint64_t retireNext;
-	while(toRetireAddresses->size())
-	{
-		retireNext=level+1;
-		victim=toRetireAddresses->back();
-		toRetireAddresses->pop_back();
-		while( retireNext < levelCount ) // This is probably overcomplicating since inclusive cache ==> contents(Cn) is a subset of contents(C(n+1))
-	    	{
-			retireNext=Process(stats,memid,victim,0,(void*)info);
-	   	}    
-  	}
-	toRetire=false;
-	
-	return;
+
+    uint32_t set = 0, lineInSet = 0;
+    //uint64_t store = GetStorage(addr);
+    	
+    debug(assert(stats));
+    debug(assert(stats->Stats));
+    debug(assert(stats->Stats[memid]));
+    // HitStatus<<"\n\t 1. Processing: "<<addr<<" memid: "<<memid;
+    // hit
+    if (Search(addr, &set, &lineInSet)){
+        // HitStatus<<"\n\t Its a hit for "<<addr<<" !! \n";
+        contents[set][lineInSet] = INVALID_ADDRESS;
+        //stats->Stats[memid][level].hitCount++;
+
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
+        else
+        {
+        	stats->Stats[memid][level].storeCount++;
+        	SetDirty(set,lineInSet);
+        }
+        //MarkUsed(set, lineInSet);
+        return true;
+    }
+
+	warn<<"\n\t EvictPrevLevel: Could not find memid "<<memid<<" addr "<<addr;
+	return false;
+
 }
 
-bool CacheLevel::GetRetireStatus()
+uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
+    uint32_t set = 0, lineInSet = 0;
+    uint64_t store = GetStorage(addr);
+    	
+    debug(assert(stats));
+    debug(assert(stats->Stats));
+    debug(assert(stats->Stats[memid]));
+ 
+    if (Search(addr, &set, &lineInSet)){
+
+        stats->Stats[memid][level].hitCount++;
+        if(loadstoreflag&0b01)
+        	stats->Stats[memid][level].loadCount++;
+        else
+        {
+        	stats->Stats[memid][level].storeCount++;
+        	SetDirty(set,lineInSet);
+        }
+        MarkUsed(set, lineInSet);
+        return INVALID_CACHE_LEVEL;
+    }
+
+    // miss
+
+    stats->Stats[memid][level].missCount++;
+    IReplace(addr,store, set, LineToReplace(set));
+    return level + 1;
+}
+
+
+void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint32_t levelCount,void* info)
 {
-	return toRetire;
+	
+	uint32_t i=0;
+	uint64_t victim;
+	uint64_t EvictNext;
+	uint64_t tmpNext;
+	if(toEvictAddresses->size() > 1)
+		warn<<"\n\t Inconsistent behavior(more than one address to Evict!) for InclusiveCacheLevel with memid "<<memid<<" at level "<<level;
+	// While loop is unnecessary since at each level there SHOULD be only one address to Evict per memop!
+	while(toEvictAddresses->size())
+	{
+		EvictNext=1; // Can start 'retiring' from L2(level=1), since if there is need to Evict L1 (level=0) would have 'invalidated' itself during the 'replace' method.
+		victim=toEvictAddresses->back();
+		toEvictAddresses->pop_back();
+		while( EvictNext < level ) // level is assumed to always be <levelCount!!
+	    	{
+			if(~( levels[EvictNext]->EvictPrevLevel(stats,memid,victim,0,(void*)info) ) )
+				warn <<"\n\t Did not find address "<<victim<<" which has to be evicted from level "<<EvictNext<<" and the memid is "<<memid ;
+			EvictNext++;
+	   	}
+	   	tmpNext=level+1;
+	   	while( tmpNext<  GetLevelCount() )
+	   	{
+			//cout<<"\n\t ++ EvictNext: "<<EvictNext<<" Level "<<level;		   	
+	   		levels[tmpNext]->Process(stats,memid,victim,0,(void*)info);    
+	   		tmpNext++;
+	   	}
+  	}
+	toEvict=false;
+
+}
+
+bool CacheLevel::GetEvictStatus()
+{
+	return toEvict;
 }
 
 void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
@@ -2101,19 +2193,24 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
-    uint32_t retireNext=0;
+    uint32_t EvictNext=0;
     uint32_t tmpNext=0;
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
-        tmpNext=next; // Need to check whether the current 'next' has eligible candidates to be retired!
+        tmpNext=next; // Need to check whether the current 'next' has eligible candidates to be Evictd!
         next = levels[next]->Process(stats, access->memseq, victim, access->loadstoreflag,(void*)(&evictInfo));
-        if(levels[tmpNext]->GetRetireStatus())
+        
+        if(levels[tmpNext]->GetEvictStatus())
         {
         	// This is probably overcomplicating since inclusive cache ==> contents(Cache(n)) is a subset of contents(Cache(n+1))
         	// The for/while loop is needed if, 'dirty-victim' from Cache(n) is not found in Cache(n+1) and another 'dirty-victim-1' from Cache(n+1) pops up and eventually needs to be treated!
   
-        	if( (next) < (levelCount) ) // To ensure that levels[next]-> can be called from RetireDirty!!
-        		levels[tmpNext]->RetireDirty(stats, access->memseq,levelCount,(void*)(&evictInfo));
+        	if( (next) <= (levelCount) ) // To ensure that levels[next]-> can be called from EvictDirty!!
+        	{
+        		//if(tmpNext)
+        		//	cout<<"\n\t About to attempt eviction of "<<levels[tmpNext]->toEvictAddresses->back()<<" at level "<<tmpNext;
+        		levels[tmpNext]->EvictDirty(stats, levels,access->memseq,levelCount,(void*)(&evictInfo));
+        	}
         		
 		 //else Implies there is a dirty line at LLC! Need to be handelled at HybridCache!
    	}

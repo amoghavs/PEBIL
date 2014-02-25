@@ -36,6 +36,7 @@ using namespace std;
 #define GIGA (MEGA*KILO)
 
 #define INVALID_CACHE_LEVEL (0xffffffff)
+#define INVALID_ADDRESS (0xffffffff)
 
 enum CacheLevelType {
     CacheLevelType_Undefined,
@@ -225,6 +226,7 @@ protected:
     CacheLevelType type;
 
     uint32_t level;
+    uint32_t levelCount;
     uint32_t size;
     uint32_t associativity;
     uint32_t linesize;
@@ -237,15 +239,18 @@ protected:
     bool**  dirtystatus;
     uint32_t* recentlyUsed;
     history** historyUsed;
-    bool toRetire;
-    vector<uint64_t>* toRetireAddresses;
+    bool toEvict;
+
 
 public:
+    vector<uint64_t>* toEvictAddresses;
     CacheLevel();
     ~CacheLevel();
 
     bool IsExclusive() { return (type == CacheLevelType_ExclusiveLowassoc || type == CacheLevelType_ExclusiveHighassoc); }
 
+    uint32_t GetLevelCount() { return levelCount;}
+    uint32_t SetLevelCount(uint32_t InpLevelCount) { return levelCount=InpLevelCount; }
     CacheLevelType GetType() { return type; }
     ReplacementPolicy GetReplacementPolicy() { return replpolicy; }
     uint32_t GetLevel() { return level; }
@@ -276,8 +281,11 @@ public:
     virtual void SetDirty(uint32_t setid, uint32_t lineid);
     virtual void ResetDirty(uint32_t setid, uint32_t lineid);
     virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
-    virtual void RetireDirty(CacheStats* stats,uint32_t memid,uint32_t levelCount,void* info); // void* info is needed since eventually 'Process' needs to be called! 
-    virtual bool GetRetireStatus();
+    virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint32_t levelCount,void* info); // void* info is needed since eventually 'Process' needs to be called! 
+    virtual bool EvictPrevLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info); // void* info is needed since eventually 'Process' needs to be called!
+    virtual uint64_t EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
+    virtual bool GetEvictStatus();
+    virtual uint64_t  IReplace(uint64_t addr, uint64_t store, uint32_t setid, uint32_t lineid);
 };
 
 class InclusiveCacheLevel : public virtual CacheLevel {
