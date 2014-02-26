@@ -1988,7 +1988,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 
     if (Search(store, &set, &lineInSet)){
         stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag&0b01)
+        if(loadstoreflag)
         	stats->Stats[memid][level].loadCount++;
         else
         {
@@ -2003,6 +2003,13 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 
     stats->Stats[memid][level].missCount++;
     Replace(store, set, LineToReplace(set));
+
+    stats->Stats[memid][level].storeCount++; // 1 for updating 'addr'
+    SetDirty(set,lineInSet); // Perhaps can forgo 'ResetDirty' at 'Replace' method!!
+ 
+    if(level<(GetLevelCount()-1))
+    	stats->Stats[memid][level].loadCount++;
+    	
     return level + 1;
 }
 
@@ -2040,7 +2047,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
     // hit
     if (Search(store, &set, &lineInSet)){
         stats->Stats[memid][level].hitCount++;
-        if(loadstoreflag&0b01)
+        if(loadstoreflag)
         	stats->Stats[memid][level].loadCount++;
         else
         	stats->Stats[memid][level].storeCount++;
@@ -2077,10 +2084,10 @@ uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
+    stats->Stats[memid][level].storeCount++;
  
     if (Search(addr, &set, &lineInSet)){
 
-        stats->Stats[memid][level].hitCount++;
         if(loadstoreflag&0b01)
         	stats->Stats[memid][level].loadCount++;
         else
@@ -2093,14 +2100,13 @@ uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_
     }
 
     // miss
-    cout<<"\n\t It is a miss for address "<<addr;
-    stats->Stats[memid][level].missCount++;
+   // cout<<"\n\t It is a miss for address "<<addr;
     Replace(store, set, LineToReplace(set));
     return level + 1;
 }
 
 
-void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint32_t levelCount,void* info)
+void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint64_t loadstoreflag,void* info)
 {
 	
 	uint32_t i=0;
@@ -2109,6 +2115,8 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
 	uint64_t tmpNext;
 	bool shouldEvictNextLevel=false;
 	
+	if(loadstoreflag)
+		stats->Stats[memid][level].storeCount++; // H=0; E=1;L=0;
 	// While loop is unnecessary since at each level there SHOULD be only one address to Evict per memop!
 	while(toEvictAddresses->size())
 	{
@@ -2147,15 +2155,15 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     }
 
 	tmpNext=0;
-	while(levels[tmpNext]->GetEvictStatus())
+	while( (tmpNext<levelCount) && (levels[tmpNext]->GetEvictStatus()) )
 	{
-		levels[tmpNext]->EvictDirty(stats, levels,access->memseq,levelCount,(void*)(&evictInfo));
+		levels[tmpNext]->EvictDirty(stats, levels,access->memseq,access->loadstoreflag,(void*)(&evictInfo));
 		tmpNext++;
 	}
 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
-     if(access->loadstoreflag&0b01)
+     if(access->loadstoreflag)
     	stats->Stats[access->memseq][levelCount-1].loadCount++;
      else
     	stats->Stats[access->memseq][levelCount-1].storeCount++;   
