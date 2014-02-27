@@ -240,6 +240,7 @@ protected:
     uint32_t* recentlyUsed;
     history** historyUsed;
     bool toEvict;
+    bool toEvictSecondary;
 
 
 public:
@@ -261,6 +262,7 @@ public:
     uint64_t CountColdMisses();
 
     uint64_t GetStorage(uint64_t addr);
+    uint64_t GetAddress(uint64_t store);
     uint32_t GetSet(uint64_t addr);
     uint32_t LineToReplace(uint32_t setid);
     bool MultipleLines(uint64_t addr, uint32_t width);
@@ -275,15 +277,19 @@ public:
 
     // re-implemented by Exclusive/InclusiveCacheLevel
     virtual uint32_t Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
+    virtual uint32_t EvictProcess(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);    
     virtual const char* TypeString() = 0;
     virtual void Init (CacheLevel_Init_Interface);
     
     virtual void SetDirty(uint32_t setid, uint32_t lineid);
     virtual void ResetDirty(uint32_t setid, uint32_t lineid);
     virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
-    virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint32_t levelCount,void* info); // void* info is needed since eventually 'Process' needs to be called! 
+    virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint64_t loadstoreflag,void* info); // void* info is needed since eventually 'Process' needs to be called! 
     virtual uint64_t EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
     virtual bool GetEvictStatus();
+    virtual bool GetEvictSecondaryStatus();
+    virtual void setEvictSecondary();
+    virtual void ResetEvictSecondary();
 
 };
 
