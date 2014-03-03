@@ -646,7 +646,12 @@ extern "C" {
                 assert(st);
 
                 // compile per-instruction stats into blocks
-                RangeStats* aggrange = new RangeStats(st->InstructionCount);
+                RangeStats* aggrange;
+		if(st->PerInstruction)
+		 aggrange= new RangeStats(st->InstructionCount);
+		else
+		aggrange=new RangeStats(st->BlockCount);
+
                 for (uint32_t memid = 0; memid < st->InstructionCount; memid++){
                     uint32_t bbid;
                     RangeStats* r = (RangeStats*)st->Stats[RangeHandlerIndex];
@@ -1630,19 +1635,25 @@ uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, ui
     return prev;
 }
  
-uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
+uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid,uint64_t loadstoreflag){
     uint64_t prev = contents[setid][lineid];
     contents[setid][lineid] = store;
-    MarkUsed(setid, lineid);
+    //MarkUsed(setid, lineid);
  
     if(GetDirtyStatus(setid,lineid)) 
     {
     	toEvict=true;
     	toEvictAddresses->push_back(prev);
+	//cout<<"\n\t Trying to evict "<<prev<<" since I need to store "<<store<<" wait, is that a load: "<<loadstoreflag;
      }
-    // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag.
-    ResetDirty(setid,lineid);
-    return prev;
+    // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag if it is indeed dirty!
+    if(loadstoreflag)
+	ResetDirty(setid,lineid);
+    else
+	SetDirty(setid,lineid);
+	
+	MarkUsed(setid,lineid);    
+	return prev;
 }
 
 inline void CacheLevel::MarkUsed(uint32_t setid, uint32_t lineid){
@@ -2002,7 +2013,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 	    else
 	    {
 			stats->Stats[memid][level].storeCount++;
-			SetDirty(set,LineToReplace(set));
+			SetDirty(set,lineInSet);
 	    }
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
@@ -2011,7 +2022,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     // miss
 
     stats->Stats[memid][level].missCount++;
-    Replace(store, set, LineToReplace(set));
+    Replace(store, set, LineToReplace(set),loadstoreflag);
     if(loadstoreflag)
     {
 		stats->Stats[memid][level].loadCount++;
@@ -2019,7 +2030,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
     else
     {
 		stats->Stats[memid][level].storeCount++;
-		SetDirty(set,LineToReplace(set));
+		//SetDirty(set,LineToReplace(set));
     }
      
  //   if(level<(GetLevelCount()-1))
@@ -2030,7 +2041,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 
 uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
     uint32_t set = 0, lineInSet = 0;
-    uint64_t store = GetStorage(addr);
+    uint64_t store = addr;//GetStorage(addr);
     	
     debug(assert(stats));
     debug(assert(stats->Stats));
@@ -2045,14 +2056,14 @@ uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t ad
 	    else
 	    {
 			stats->Stats[memid][level].storeCount++;
-			SetDirty(set,LineToReplace(set));
+			SetDirty(set,lineInSet);
 	    }
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
 
     // miss
-    Replace(store, set, LineToReplace(set));
+    Replace(store, set, LineToReplace(set),loadstoreflag);
     if(loadstoreflag)
     {
 		stats->Stats[memid][level].loadCount++;
@@ -2060,7 +2071,7 @@ uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t ad
     else
     {
 		stats->Stats[memid][level].storeCount++;
-		SetDirty(set,LineToReplace(set));
+		//SetDirty(set,LineToReplace(set));
     }
      
  //   if(level<(GetLevelCount()-1))
@@ -2091,7 +2102,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
             }
         }
 
-        e->addr = Replace(e->addr, set, lineInSet);
+        e->addr = Replace(e->addr, set, lineInSet,loadstoreflag);
 
         if (level == e->level){
             return INVALID_CACHE_LEVEL;
@@ -2151,7 +2162,7 @@ uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_
 
     // miss
    // cout<<"\n\t It is a miss for address "<<addr;
-    Replace(store, set, LineToReplace(set));
+    Replace(store, set, LineToReplace(set),~storeflag);
     //SetDirty(set,lineInSet); // Even if it is a miss, the said addr will be brought from Cn+1 to Cn, so its dirty!
 
     if( GetDirtyStatus(set,LineToReplace(set)) && ( (level+1)<GetLevelCount()) )
@@ -2169,7 +2180,7 @@ uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_
 }
 
 
-void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,uint64_t loadstoreflag,void* info)
+void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,void* info)
 {
 	
 	uint32_t i=0;
@@ -2184,7 +2195,7 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
 	{
 		store=toEvictAddresses->back();
 		toEvictAddresses->pop_back();
-   		victim=GetAddress(store);
+   		victim=store;//etAddress(store);
 	   	next=level+1;
 	   	if(next< GetLevelCount() )
 	   		next=levels[next]->EvictProcess(stats,memid,victim,0,(void*)info);
@@ -2231,7 +2242,9 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     uint32_t tmpNext=0;
     bool shouldEvictNextLevel=false;
     uint64_t loadstoreflag= access->loadstoreflag;
-	
+
+	//cout<<"\n\t I am "<<levels[0]->GetStorage(victim)<<" wait am I load:  "<<loadstoreflag;
+
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,(void*)(&evictInfo));
@@ -2239,10 +2252,10 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     }
 	
 	tmpNext=0;
-	while( (tmpNext<levelCount))
+	while( (tmpNext<levelCount) ) //&& (levels[tmpNext]->GetEvictStatus()))
 	{
 		if(levels[tmpNext]->GetEvictStatus())
-			levels[tmpNext]->EvictDirty(stats, levels,access->memseq,access->loadstoreflag,(void*)(&evictInfo));
+			levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
 		tmpNext++;
 	}
      
