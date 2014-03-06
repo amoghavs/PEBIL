@@ -698,7 +698,9 @@ extern "C" {
 		                        bbid = st->BlockIds[memid];
 		                    }                    
 		                    c->HybridHit(bbid,s->GetHybridHits(memid)) ;
-		                    c->HybridMiss(bbid,s->GetHybridMisses(memid));                     		
+		                    c->HybridMiss(bbid,s->GetHybridMisses(memid));  
+		                    c->HybridLoad(bbid,s->GetHybridLoads(memid)); 
+		                    c->HybridStore(bbid,s->GetHybridStores(memid));                   		
 		                    	
 		            }
                     }
@@ -790,8 +792,8 @@ extern "C" {
 		                      << TAB << dec << (c->LevelCount)
 		                      << TAB << dec << c->GetHybridHits(bbid)
 		                      << TAB << dec << c->GetHybridMisses(bbid)
-		                      << TAB << dec << c->GetLoads(bbid,c->LevelCount-1)
-		                      << TAB << dec << c->GetStores(bbid,c->LevelCount-1)
+		                      << TAB << dec << c->GetHybridLoads(bbid) //,c->LevelCount-1)
+		                      << TAB << dec << c->GetHybridStores(bbid) //,c->LevelCount-1)
 		                      << ENDL;
                            	
                            }
@@ -860,7 +862,9 @@ void PrintSimulationStats(ofstream& f, SimulationStats* stats, thread_key_t tid,
 	    for (uint32_t memid = 0; memid < stats->InstructionCount; memid++){
 	            uint32_t bbid = stats->BlockIds[memid];
  	            c->HybridHit(bbid,s->GetHybridHits(memid)) ;
-	            c->HybridMiss(bbid,s->GetHybridMisses(memid));                     		
+	            c->HybridMiss(bbid,s->GetHybridMisses(memid));
+	            c->HybridLoad(bbid,s->GetHybridLoads(memid));                     		
+	            c->HybridStore(bbid,s->GetHybridStores(memid));
 	            	
 	    }
        }        
@@ -1167,6 +1171,13 @@ uint64_t CacheStats::GetLoads(uint32_t memid, uint32_t lvl){
     return Stats[memid][lvl].loadCount;
 }
 
+uint64_t CacheStats::GetHybridLoads(uint32_t memid){
+    return HybridMemStats[memid].loadCount;
+}
+
+uint64_t CacheStats::GetHybridStores(uint32_t memid){
+    return HybridMemStats[memid].storeCount;
+}
 
 uint64_t CacheStats::GetLoads(uint32_t lvl){
     uint64_t loads = 0;
@@ -1176,12 +1187,37 @@ uint64_t CacheStats::GetLoads(uint32_t lvl){
     return loads;
 }
 
+uint64_t CacheStats::GetHybridLoads(){
+    uint64_t loads = 0;
+    for (uint32_t i = 0; i < Capacity; i++){
+        loads += HybridMemStats[i].loadCount;
+    }
+    return loads;
+}
+
+uint64_t CacheStats::GetHybridStores(){
+    uint64_t stores = 0;
+    for (uint32_t i = 0; i < Capacity; i++){
+        stores += HybridMemStats[i].storeCount;
+    }
+    return stores;
+}
+
 void CacheStats::Store(uint32_t memid, uint32_t lvl){
     Store(memid, lvl, 1);
 }
 
 void CacheStats::Store(uint32_t memid, uint32_t lvl, uint32_t cnt){
     Stats[memid][lvl].storeCount += cnt;
+}
+
+
+void CacheStats::HybridLoad(uint32_t memid, uint32_t cnt){
+    HybridMemStats[memid].loadCount += cnt;
+}
+
+void CacheStats::HybridStore(uint32_t memid, uint32_t cnt){
+    HybridMemStats[memid].storeCount += cnt;
 }
 
 
@@ -1207,6 +1243,17 @@ void CacheStats::HybridHit(uint32_t memid){
     HybridHit(memid, 1);
 }
 
+void CacheStats::HybridLoad(uint32_t memid){
+    HybridLoad(memid, 1);
+}
+
+void CacheStats::HybridStore(uint32_t memid){
+    HybridStore(memid, 1);
+}
+
+
+
+
 void CacheStats::Miss(uint32_t memid, uint32_t lvl){
     Miss(memid, lvl, 1);
 }
@@ -1218,6 +1265,9 @@ void CacheStats::HybridMiss(uint32_t memid){
 void CacheStats::Hit(uint32_t memid, uint32_t lvl, uint32_t cnt){
     Stats[memid][lvl].hitCount += cnt;
 }
+
+
+
 
 void CacheStats::HybridHit(uint32_t memid, uint32_t cnt){
     HybridMemStats[memid].hitCount += cnt;
@@ -1262,6 +1312,25 @@ uint64_t CacheStats::GetMisses(uint32_t lvl){
     }
     return hits;
 }
+
+uint64_t CacheStats::GetHybridHits()
+{
+    uint64_t hits = 0;
+    for (uint32_t i = 0; i < Capacity; i++){
+        hits += HybridMemStats[i].hitCount;
+    }
+    return hits;
+}
+
+uint64_t CacheStats::GetHybridMisses()
+{
+    uint64_t misses = 0;
+    for (uint32_t i = 0; i < Capacity; i++){
+        misses += HybridMemStats[i].missCount;
+    }
+    return misses;
+}
+
 
 bool CacheStats::HasMemId(uint32_t memid){
     if (memid >= Capacity){
@@ -1493,6 +1562,7 @@ void CacheLevel::Init(CacheLevel_Init_Interface){
     replpolicy = pol;
     toEvict=false;
     toEvictAddresses=new vector<uint64_t>;
+    
     //levelCount=
 
     countsets = size / (linesize * associativity);
@@ -1995,7 +2065,7 @@ bool CacheLevel::GetDirtyStatus(uint32_t setid, uint32_t lineid){
 	return dirtystatus[setid][lineid];
 }
 
-uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
+uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,bool* AnyEvict, void* info){
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = GetStorage(addr);
     	
@@ -2032,7 +2102,9 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 		stats->Stats[memid][level].storeCount++;
 		//SetDirty(set,LineToReplace(set));
     }
-     
+     (*AnyEvict)|=toEvict;
+     //if((*AnyEvict))
+     //	cout<<"\n\t Addr: "<<addr<<" level "<<level<<" AnyEvict "<<(*AnyEvict)<<" toEvict "<<toEvict;
  //   if(level<(GetLevelCount()-1))
    // 	stats->Stats[memid][level+1].loadCount++;
     	
@@ -2046,7 +2118,6 @@ uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t ad
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
-
     if (Search(store, &set, &lineInSet)){
     	// hit
     	    if(loadstoreflag)
@@ -2144,6 +2215,7 @@ uint32_t ExclusiveCacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_
 }
 
 // CAUTION: STOREFLAG=1 ==> STORE ; STOREFLAG=0 ==> LOAD;
+/*
 uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t storeflag,void* info){
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = GetStorage(addr);
@@ -2178,7 +2250,7 @@ uint64_t CacheLevel::EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_
     SetDirty(set,LineToReplace(set));
     return level + 1;
 }
-
+*/
 
 void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,void* info)
 {
@@ -2189,7 +2261,6 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
 	uint64_t next;
 	uint64_t tmpNext;
 	bool shouldEvictNextLevel=false;
-	
 	// While loop is unnecessary since at each level there SHOULD be only one address to Evict per memop!
 	while(toEvictAddresses->size())
 	{
@@ -2198,7 +2269,9 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
    		victim=store;//etAddress(store);
 	   	next=level+1;
 	   	if(next< GetLevelCount() )
+	   	{
 	   		next=levels[next]->EvictProcess(stats,memid,victim,0,(void*)info);
+	   	}
 	   	while( next<  GetLevelCount() )
 	   	{
 	   		   		//stats->Stats[memid][next].loadCount++; // THis is because previous process call for 'victim' must have resulted in a miss at 'level+1', hence the following process method should be 'load'
@@ -2206,31 +2279,33 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
 	   	}
   	}
 	toEvict=false;
-	toEvictSecondary=false;
+	//toEvictSecondary=false;
 	return;
 }
 
-void CacheLevel::setEvictSecondary()
-{
-	toEvictSecondary=true;
-}
+//void CacheLevel::setEvictSecondary()
+//{
+//	toEvictSecondary=true;
+//}
 
 
-void CacheLevel::ResetEvictSecondary()
-{
-	toEvictSecondary=false;
-}
+//void CacheLevel::ResetEvictSecondary()
+//{
+//	toEvictSecondary=false;
+//}
 
-bool CacheLevel::GetEvictSecondaryStatus()
-{
-	return toEvictSecondary;
-}
+//bool CacheLevel::GetEvictSecondaryStatus()
+//{
+//	return toEvictSecondary;
+//}
+
 bool CacheLevel::GetEvictStatus()
 {
 	return toEvict;
 }
 
 void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
+ 
     uint32_t next = 0;
     uint64_t victim = access->address;
 
@@ -2242,26 +2317,31 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     uint32_t tmpNext=0;
     bool shouldEvictNextLevel=false;
     uint64_t loadstoreflag= access->loadstoreflag;
-
-	//cout<<"\n\t I am "<<levels[0]->GetStorage(victim)<<" wait am I load:  "<<loadstoreflag;
+    bool AnyEvict=false;
 
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
-        next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,(void*)(&evictInfo));
+        next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
     }
 	
 	tmpNext=0;
-	while( (tmpNext<levelCount) ) //&& (levels[tmpNext]->GetEvictStatus()))
+	if(AnyEvict)
+	while( (tmpNext<levelCount) )
 	{
 		if(levels[tmpNext]->GetEvictStatus())
+		{
+			
 			levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
+		}
 		tmpNext++;
 	}
+    	 
      
 }
 
 void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
+ 
     uint32_t next = 0;
     uint64_t victim = access->address;
 
@@ -2269,19 +2349,34 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
 
     EvictionInfo evictInfo;
     evictInfo.level = INVALID_CACHE_LEVEL;
-    while (next < levelCount){
-         next = levels[next]->Process(stats, access->memseq, victim,access->loadstoreflag, (void*)(&evictInfo));
-        // HitStatus<<"\n\t 2. Presence check for address "<<victim;
+    uint32_t EvictNext=0;
+    uint32_t tmpNext=0;
+    bool shouldEvictNextLevel=false;
+    uint64_t loadstoreflag= access->loadstoreflag;
+    bool AnyEvict=false;
+
+      while (next < levelCount){
+        //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
+        next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
+        loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
     }
-  
+	
+	tmpNext=0;
+	if(AnyEvict)
+	{
+		while( (tmpNext<levelCount) )
+		{
+			if(levels[tmpNext]->GetEvictStatus())
+			{
+				levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
+			}
+			tmpNext++;
+		}
+	}	
     	 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
     {
-    	CheckRange(stats,victim,access->memseq);
-        if(access->loadstoreflag)
-    		stats->Stats[access->memseq][levelCount-1].loadCount++;
-        else
-    		stats->Stats[access->memseq][levelCount-1].storeCount++;   
+    	CheckRange(stats,victim,access->loadstoreflag,access->memseq); 
     } 
 }
 
@@ -2302,7 +2397,7 @@ void CacheHybridStructureHandler::ExtractAddresses()
 	{
 		istringstream stream(token);
 		stream>>Dummy;
-		cout<<dec<<Dummy;
+		//cout<<dec<<Dummy;
 	    	if(Dummy<0x1)
 	    	{
 	    		cout<<"\n\t The boundary address of Cache structure: "<<sysId<<" token "<<token<<" is "<<Dummy<<" is not positive!! \n";
@@ -2367,16 +2462,19 @@ CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHan
             InclusiveCacheLevel* l = new InclusiveCacheLevel();
             l->Init(Extract_Level_Args(i));
             levels[i] = l;
+            l->SetLevelCount(levelCount);
         } else if (LVLF(i, Type()) == CacheLevelType_InclusiveHighassoc){
             HighlyAssociativeInclusiveCacheLevel* l = new HighlyAssociativeInclusiveCacheLevel();
             l->Init(Extract_Level_Args(i));
             levels[i] = l;
+            l->SetLevelCount(levelCount);
         } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveLowassoc){
             ExclusiveCacheLevel* l = new ExclusiveCacheLevel();
             ExclusiveCacheLevel* p = dynamic_cast<ExclusiveCacheLevel*>(h.levels[i]);
             assert(p->GetType() == CacheLevelType_ExclusiveLowassoc);
             l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
             levels[i] = l;
+            l->SetLevelCount(levelCount);
             
         } else if (LVLF(i, Type()) == CacheLevelType_ExclusiveHighassoc){
             HighlyAssociativeExclusiveCacheLevel* l = new HighlyAssociativeExclusiveCacheLevel();
@@ -2384,29 +2482,33 @@ CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHan
             assert(p->GetType() == CacheLevelType_ExclusiveHighassoc);
             l->Init(Extract_Level_Args(i), p->FirstExclusive, p->LastExclusive);
             levels[i] = l;
+            l->SetLevelCount(levelCount);
         } else {
             assert(false);
         }
     }
 }
 
-bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uint32_t memid)
+bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uint64_t loadstoreflag, uint32_t memid)
 {
 	bool AddressNotFound= true; 
 	for(int CurrRange=0 ; (CurrRange < AddressRangesCount) && AddressNotFound ; CurrRange++)
 	{
 		if( ( addr > RamAddressStart[CurrRange] ) && (addr <= RamAddressEnd[CurrRange] ) )
 		{
-			hits+=1;
+			//hits+=1;
 			AddressNotFound= false;
 			stats->HybridMemStats[memid].hitCount++; //=1;
-			//HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a hit!! \n";
+			if(loadstoreflag)
+				stats->HybridMemStats[memid].loadCount++;
+			else
+				stats->HybridMemStats[memid].storeCount++;
 		}
 	
 	}
 	if(AddressNotFound)
 	{
-		misses+=1;
+		//misses+=1;
 		stats->HybridMemStats[memid].missCount++; //=1;
 			//HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a miss!! \n";		
 	}

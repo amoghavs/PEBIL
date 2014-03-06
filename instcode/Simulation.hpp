@@ -128,19 +128,40 @@ public:
 
     void Hit(uint32_t memid, uint32_t lvl);
     void HybridHit(uint32_t memid);
+    
     void Miss(uint32_t memid, uint32_t lvl);
     void HybridMiss(uint32_t memid);
+    
     void Hit(uint32_t memid, uint32_t lvl, uint32_t cnt);
     void HybridHit(uint32_t memid, uint32_t cnt);
+    
     void Miss(uint32_t memid, uint32_t lvl, uint32_t cnt);
     void HybridMiss(uint32_t memid,uint32_t cnt);
+
+    void HybridLoads(uint32_t memid, uint32_t cnt);
+    void HybridStores(uint32_t memid, uint32_t cnt);
+    uint64_t GetHybridLoads(uint32_t memid);
+    uint64_t GetHybridLoads();
+    uint64_t GetHybridStores(uint32_t memid);
+    uint64_t GetHybridStores();
     
     void Load(uint32_t memid,uint32_t lvl);
     void Load(uint32_t memid, uint32_t lvl, uint32_t cnt);
+
+    void HybridLoad(uint32_t memid);
+    void HybridLoad(uint32_t memid,uint32_t cnt);
+
+
     uint64_t GetLoads(uint32_t memid, uint32_t lvl);
     uint64_t GetLoads(uint32_t lvl);
+
+    
     void Store(uint32_t memid,uint32_t lvl);
     void Store(uint32_t memid, uint32_t lvl, uint32_t cnt);
+    
+    void HybridStore(uint32_t memid);
+    void HybridStore(uint32_t memid,uint32_t cnt);
+    
     uint64_t GetStores(uint32_t memid, uint32_t lvl);
     uint64_t GetStores(uint32_t lvl);    
     
@@ -149,10 +170,13 @@ public:
     static float GetHitRate(uint64_t hits, uint64_t misses);
     uint64_t GetHits(uint32_t memid, uint32_t lvl);
     uint64_t GetHybridHits(uint32_t memid);
+
     uint64_t GetMisses(uint32_t memid, uint32_t lvl);
     uint64_t GetHybridMisses(uint32_t memid);
     uint64_t GetHits(uint32_t lvl);
+    uint64_t GetHybridHits();
     uint64_t GetMisses(uint32_t lvl);
+    uint64_t GetHybridMisses();
     LevelStats* GetLevelStats(uint32_t memid, uint32_t lvl);
     uint64_t GetAccessCount(uint32_t memid);
     float GetHitRate(uint32_t memid, uint32_t lvl);
@@ -240,7 +264,6 @@ protected:
     uint32_t* recentlyUsed;
     history** historyUsed;
     bool toEvict;
-    bool toEvictSecondary;
 
 
 public:
@@ -276,7 +299,7 @@ public:
 
 
     // re-implemented by Exclusive/InclusiveCacheLevel
-    virtual uint32_t Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
+    virtual uint32_t Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,bool*AnyEvict,void* info);
     virtual uint32_t EvictProcess(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);    
     virtual const char* TypeString() = 0;
     virtual void Init (CacheLevel_Init_Interface);
@@ -285,11 +308,8 @@ public:
     virtual void ResetDirty(uint32_t setid, uint32_t lineid);
     virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
     virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,void* info); // void* info is needed since eventually 'Process' needs to be called! 
-    virtual uint64_t EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
+    //virtual uint64_t EvictToNextLevel(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info);
     virtual bool GetEvictStatus();
-    virtual bool GetEvictSecondaryStatus();
-    virtual void setEvictSecondary();
-    virtual void ResetEvictSecondary();
 
 };
 
@@ -426,7 +446,7 @@ public:
 
     uint64_t GetHits(){return hits;}
     uint64_t GetMisses(){ return misses;} 
-    bool CheckRange(CacheStats* stats,uint64_t addr,uint32_t memid); //, uint32_t* set, uint32_t* lineInSet);	
+    bool CheckRange(CacheStats* stats,uint64_t addr,uint64_t loadstoreflag,uint32_t memid); //, uint32_t* set, uint32_t* lineInSet);	
     void ExtractAddresses();
     CacheHybridStructureHandler(CacheHybridStructureHandler& h);
     void Process(void* stats, BufferEntry* access);
