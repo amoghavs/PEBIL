@@ -2337,7 +2337,7 @@ void CacheHybridStructureHandler::ExtractAddresses()
 		//cout<<dec<<Dummy;
 	    	if(Dummy<0x1)
 	    	{
-	    		warn<<"\n\t The boundary address of Cache structure: "<<sysId<<" token "<<token<<" is "<<Dummy<<" is not positive!! \n";
+	    		ErrorExit("\n\t The boundary address of Cache structure: "<<sysId<<" token "<<token<<" is "<<Dummy<<" is not positive!! \n",MetasimError_StringParse);
 	    		//cout<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
 	    	}
 	    	else
@@ -2378,8 +2378,7 @@ void CacheHybridStructureHandler::ExtractAddresses()
     	}
     	else
     	{
-    		warn<<"\n\t Address range with start: "<<Start[AddCopy]<<" end: "<<End[AddCopy]<<" is illegal, starting address is smaller than ending address ";
-    		exit(-1); 
+    		ErrorExit("\n\t Address range with start: "<<Start[AddCopy]<<" end: "<<End[AddCopy]<<" is illegal, starting address is smaller than ending address ",MetasimError_StringParse);
     	}
     	//HitStatus<<"\n\t Pair: "<<AddCopy<<"\t start: "<<RamAddressStart[AddCopy]<<"\t end: "<<RamAddressEnd[AddCopy]<<"\n";
     
