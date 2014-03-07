@@ -35,6 +35,7 @@
 #include <string.h>
 #include <assert.h>
 
+
 // AVS: Flow tracing
 //fstream HitStatus; 
 
@@ -1605,9 +1606,9 @@ void CacheLevel::Init(CacheLevel_Init_Interface){
 void HighlyAssociativeCacheLevel::Init(CacheLevel_Init_Interface)
 {
     assert(associativity >= MinimumHighAssociativity);
-    fastcontents = new pebil_map_type<uint64_t, uint32_t>*[countsets];
+    fastcontents = new pebil_map_type<uint64_t, pair<uint32_t,bool> >*[countsets];
     for (uint32_t i = 0; i < countsets; i++){
-        fastcontents[i] = new pebil_map_type<uint64_t, uint32_t>();
+        fastcontents[i] = new pebil_map_type<uint64_t, pair<uint32_t,bool> >();
         fastcontents[i]->clear();
     }
 }
@@ -1686,16 +1687,51 @@ uint32_t CacheLevel::LineToReplace(uint32_t setid){
     return 0;
 }
 
-uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid){
+bool HighlyAssociativeCacheLevel::GetDirtyStatus(uint32_t setid,uint32_t lineid,uint64_t store)
+{
+	//if(set)
+	{
+		if( fastcontents[setid]->count(store) > 0 )
+			return (*(fastcontents[setid]))[store].second; 
+		else
+			return false; // Since it is a miss, it cannot be dirty!
+	}		
+}
+
+void HighlyAssociativeCacheLevel::SetDirty(uint32_t setid,uint32_t lineid,uint64_t store)
+{
+	(*(fastcontents[setid]))[store].second=true; // CAUTION: Assuming that the data has already been set to [setid][store] and hence proceesing to set the dirty status
+}
+
+void HighlyAssociativeCacheLevel::ResetDirty(uint32_t setid,uint32_t lineid,uint64_t store)
+{
+	(*(fastcontents[setid]))[store].second=false; // CAUTION: Assuming that the data has already been set to [setid][store] and hence proceesing to reset the dirty status
+}
+
+
+uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid,uint64_t loadstoreflag){
     uint64_t prev = contents[setid][lineid];
     contents[setid][lineid] = store;
 
-    pebil_map_type<uint64_t, uint32_t>* fastset = fastcontents[setid];
+    pebil_map_type<uint64_t, pair<uint32_t,bool> >* fastset = fastcontents[setid];
     if (fastset->count(prev) > 0){
         //assert((*fastset)[prev] == lineid);
         fastset->erase(prev);
     }
-    (*fastset)[store] = lineid;
+    (*fastset)[store].first = lineid;
+ 
+     if(GetDirtyStatus(setid,lineid,store))
+    {
+    	toEvict=true;
+    	toEvictAddresses->push_back(prev);
+    }
+
+   
+    if(loadstoreflag)
+	ResetDirty(setid,lineid,store);
+    else
+	SetDirty(setid,lineid,store);  	
+
 
     MarkUsed(setid, lineid);
     return prev;
@@ -1703,20 +1739,19 @@ uint64_t HighlyAssociativeCacheLevel::Replace(uint64_t store, uint32_t setid, ui
  
 uint64_t CacheLevel::Replace(uint64_t store, uint32_t setid, uint32_t lineid,uint64_t loadstoreflag){
     uint64_t prev = contents[setid][lineid];
-    contents[setid][lineid] = store;
-    //MarkUsed(setid, lineid);
  
-    if(GetDirtyStatus(setid,lineid)) 
+    if(GetDirtyStatus(setid,lineid,prev)) 
     {
     	toEvict=true;
     	toEvictAddresses->push_back(prev);
 	//cout<<"\n\t Trying to evict "<<prev<<" since I need to store "<<store<<" wait, is that a load: "<<loadstoreflag;
      }
     // Since the new address 'store' has been loaded just now and is not touched yet, we can reset the dirty flag if it is indeed dirty!
+    contents[setid][lineid] = store;
     if(loadstoreflag)
-	ResetDirty(setid,lineid);
+	ResetDirty(setid,lineid,store);
     else
-	SetDirty(setid,lineid);
+	SetDirty(setid,lineid,store);
 	
 	MarkUsed(setid,lineid);    
 	return prev;
@@ -1749,10 +1784,10 @@ bool HighlyAssociativeCacheLevel::Search(uint64_t store, uint32_t* set, uint32_t
         (*set) = setId;
     }
 
-    pebil_map_type<uint64_t, uint32_t>* fastset = fastcontents[setId];
+    pebil_map_type<uint64_t, pair<uint32_t,bool> >* fastset = fastcontents[setId];
     if (fastset->count(store) > 0){
         if (lineInSet){
-            (*lineInSet) = (*fastset)[store];
+            (*lineInSet) = (*fastset)[store].first;
         }
         return true;
     }
@@ -2049,15 +2084,15 @@ CacheStructureHandler::~CacheStructureHandler(){
     }
 }
 
-void CacheLevel::SetDirty(uint32_t setid, uint32_t lineid){
+void CacheLevel::SetDirty(uint32_t setid, uint32_t lineid,uint64_t store){
 	dirtystatus[setid][lineid]=true;
 }
 
-void CacheLevel::ResetDirty(uint32_t setid, uint32_t lineid){
+void CacheLevel::ResetDirty(uint32_t setid, uint32_t lineid,uint64_t store){
 	dirtystatus[setid][lineid]=false;
 }
 
-bool CacheLevel::GetDirtyStatus(uint32_t setid, uint32_t lineid){
+bool CacheLevel::GetDirtyStatus(uint32_t setid, uint32_t lineid,uint64_t store){
 	return dirtystatus[setid][lineid];
 }
 
@@ -2079,7 +2114,7 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 	    else
 	    {
 			stats->Stats[memid][level].storeCount++;
-			SetDirty(set,lineInSet);
+			SetDirty(set,lineInSet,store);
 	    }
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
@@ -2105,7 +2140,6 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
 uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,void* info){
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = addr;
-    	
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
@@ -2118,7 +2152,7 @@ uint32_t CacheLevel::EvictProcess(CacheStats* stats, uint32_t memid, uint64_t ad
 	    else
 	    {
 			stats->Stats[memid][level].storeCount++;
-			SetDirty(set,lineInSet);
+			SetDirty(set,lineInSet,store);
 	    }
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;

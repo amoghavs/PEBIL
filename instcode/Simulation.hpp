@@ -22,6 +22,7 @@
 #define _Simulation_hpp_
 
 #include <string>
+#include <utility>
 #include <Metasim.hpp>
 
 using namespace std;
@@ -306,9 +307,10 @@ public:
     virtual const char* TypeString() = 0;
     virtual void Init (CacheLevel_Init_Interface);
     
-    virtual void SetDirty(uint32_t setid, uint32_t lineid);
-    virtual void ResetDirty(uint32_t setid, uint32_t lineid);
-    virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid);
+   // Both store and lineid is being sent since while calling these methods we do not make distinction as whether the object belongs to CacheLevel or HighlyAssociateCacheLevel
+    virtual void SetDirty(uint32_t setid, uint32_t lineid,uint64_t store);
+    virtual void ResetDirty(uint32_t setid, uint32_t lineid,uint64_t store);
+    virtual bool GetDirtyStatus(uint32_t setid, uint32_t lineid,uint64_t store);
     virtual void EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid,void* info); // void* info is needed since eventually 'Process' needs to be called! 
     virtual bool GetEvictStatus();
 
@@ -343,15 +345,21 @@ public:
 
 class HighlyAssociativeCacheLevel : public virtual CacheLevel {
 protected:
-    pebil_map_type <uint64_t, uint32_t>** fastcontents;
+    //pair<uint32_t,bool> line;
+    pebil_map_type <uint64_t, pair<uint32_t,bool> >** fastcontents;
 
 public:
     HighlyAssociativeCacheLevel() {}
     ~HighlyAssociativeCacheLevel();
 
     bool Search(uint64_t addr, uint32_t* set, uint32_t* lineInSet);
-    uint64_t Replace(uint64_t addr, uint32_t setid, uint32_t lineid);
+    uint64_t Replace(uint64_t addr, uint32_t setid, uint32_t lineid,uint64_t loadstoreflag);
     virtual void Init (CacheLevel_Init_Interface);
+
+   // Both store and lineid is being sent since while calling these methods we do not make distinction as whether the object belongs to CacheLevel or HighlyAssociateCacheLevel
+   void SetDirty(uint32_t setid, uint32_t lineid,uint64_t store);
+   void ResetDirty(uint32_t setid, uint32_t lineid,uint64_t store);
+   bool GetDirtyStatus(uint32_t setid, uint32_t lineid,uint64_t store);  
 };
 
 class HighlyAssociativeInclusiveCacheLevel : public InclusiveCacheLevel, public HighlyAssociativeCacheLevel {
