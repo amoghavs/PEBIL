@@ -554,17 +554,17 @@ extern "C" {
 
 
         // dump cache simulation results
-        ofstream MemFile;
+        ofstream MemFile,RangeFile;
         string oFile;
         const char* fileName;
         SimulationFileName(stats, oFile);
         fileName = oFile.c_str();
 
-        inform << "Printing cache simulation results to " << fileName << ENDL;
-        TryOpen(MemFile, fileName);
+//        inform << "Printing cache simulation results to " << fileName << ENDL;
+//        TryOpen(MemFile, fileName);
 
 
-        if (ReuseWindow){
+/*        if (ReuseWindow){
    
 	    ofstream ReuseDistFile;
             ReuseDistFileName(stats, oFile);
@@ -610,8 +610,61 @@ extern "C" {
             }
             SpatialDistFile.close();
         }
-/*
 
+*/
+
+        if (ReuseWindow){
+   
+	    ofstream ReuseDistFile;
+            ReuseDistFileName(stats, oFile);
+            fileName = oFile.c_str();
+
+       	    inform << "Printing reuse distance results to " << fileName << ENDL;
+            TryOpen(ReuseDistFile, fileName);
+
+            for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
+                for (set<thread_key_t>::iterator it = AllData->allthreads.begin(); it != AllData->allthreads.end(); it++){
+                        ReuseDistFile << "IMAGE" << TAB << hex << (*iit) << TAB << "THREAD" << TAB << dec << AllData->GetThreadSequence((*it)) << ENDL;
+            
+		        SimulationStats* s = (SimulationStats*)AllData->GetData((*iit), (*it));
+		    	ReuseDistance* rd = s->RHandlers[ReuseHandlerIndex];
+		    	assert(rd);
+                    	inform << "Reuse distance bins for " << hex << s->Application << " Thread " << AllData->GetThreadSequence((*it)) << ENDL;
+  		    	//rd->Print();
+  		    	rd->Print(ReuseDistFile);
+                }
+            }
+            ReuseDistFile.close();
+        }
+        if (SpatialWindow){
+   
+	    ofstream SpatialDistFile;
+	    SpatialDistFileName(stats, oFile);
+            fileName = oFile.c_str();
+
+            inform << "Printing spatial locality results to " << fileName << ENDL;
+            TryOpen(SpatialDistFile, fileName);
+
+            for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
+                for (set<thread_key_t>::iterator it = AllData->allthreads.begin(); it != AllData->allthreads.end(); it++){
+                        SpatialDistFile << "IMAGE" << TAB << hex << (*iit) << TAB << "THREAD" << TAB << dec << AllData->GetThreadSequence(*it) << ENDL;
+
+                    	SimulationStats* s = (SimulationStats*)AllData->GetData((*iit), (*it));
+		    	ReuseDistance* sd = s->RHandlers[SpatialHandlerIndex];
+		    	assert(sd);
+                    	inform << "Spatial locality bins for " << hex << s->Application << " Thread " << AllData->GetThreadSequence((*it)) << ENDL;
+  		    	//sd->Print();
+  		    	sd->Print(SpatialDistFile);
+                }
+            }
+            SpatialDistFile.close();
+        }
+ 
+       if(!(CacheSimulation || AddressRangeEnable))
+        {    
+                double t = (AllData->GetTimer(*key, 1) - AllData->GetTimer(*key, 0)); 
+                inform<<"CXXX Total Execution time for instrumented application: " << t << ENDL;
+        }           
         if(CacheSimulation||AddressRangeEnable)
         {
                 // dump cache simulation results
@@ -769,13 +822,49 @@ extern "C" {
 		                uint64_t t = h + m;
 		                MemFile << "l" << dec << lvl << "[" << h << "/" << t << "(" << CacheStats::GetHitRate(h, m) << ")] ";
 		            }
+		            MemFile<<"\n Load Store Stats -->";
+		            for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
+		                uint64_t l = c->GetLoads(lvl);
+		                uint64_t s = c->GetStores(lvl);
+		                uint64_t t = l + s;
+		                double ratio=0.0f;
+		                if(t!=0)
+		                  ratio=l/t;
+		                MemFile << " l" << dec << lvl << "[" << l << "/" << t << "(" << (ratio)<<")] ";
+		            }	
+		          if(c->HybridCache)
+		             {    
+		                        uint64_t h=c->GetHybridHits();
+		                        uint64_t m=c->GetHybridMisses();
+		                        uint64_t t_hm= h+m; 
+		                        uint64_t l=c->GetHybridLoads();
+		                        uint64_t s=c->GetHybridStores();
+		                        uint64_t t_ls= l+s; 
+		                        double ratio_hm,ratio_ls;     
+		                        if(t_hm!=0)
+		                                ratio_hm= (double) h/t_hm;
+		                        if(t_ls!=0)
+		                                ratio_ls=(double) l/t_ls;
+		                        MemFile << ENDL ;     
+		                        MemFile<<" HybridCache --> Hits " << "[" << h << "/" << t_hm << "(" << (ratio_hm)<< ")]";
+		                        MemFile<<" ; Loads " << "[" << l << "/" << t_ls << "(" << (ratio_ls)<< ")]";
+		             }    
 		            MemFile << ENDL;
 		        }
 		    }
 		    MemFile << ENDL;
 		}
 	}
-
+	
+	uint32_t* HybridCacheStatus=(uint32_t*)malloc( CountCacheStructures * sizeof(uint32_t) );
+	bool PrintHybridFormat=false;
+	for (uint32_t sys = 0; sys < CountCacheStructures; sys++)
+	{
+		CacheStructureHandler* CheckHybridStructure= (CacheStructureHandler*)stats->Handlers[sys];
+		HybridCacheStatus[sys]=CheckHybridStructure->HybridCache;
+		if(PrintHybridFormat)
+			PrintHybridFormat=true;
+	}
 	if(BothRangeAndSimulation)
 	{
             MemFile << "# " << "BLK" << TAB << "Sequence" << TAB << "Hashcode" << TAB << "ImageSequence" 
@@ -787,7 +876,8 @@ extern "C" {
         MemFile 
             << "# " << "BLK" << TAB << "Sequence" << TAB << "Hashcode" << TAB << "ImageSequence" << TAB << "ThreadId " << ENDL;        
         MemFile
-            << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << ENDL;
+            << "# " << TAB << "SysId" << TAB << "Level" << TAB << "HitCount" << TAB << "MissCount" << TAB << "LoadCount" << TAB << "StoreCount" << ENDL;
+
 	}	
         if(AddressRangeEnable)
         {
@@ -830,7 +920,7 @@ extern "C" {
 		            CacheStats* s = (CacheStats*)st->Stats[sys];
 		            assert(s);
 		            s->Verify();
-		            CacheStats* c = new CacheStats(s->LevelCount, s->SysId, st->BlockCount);
+		            CacheStats* c = new CacheStats(s->LevelCount, s->SysId, st->BlockCount,s->HybridCache);
 		            aggstats[sys] = c;
 
 		            for (uint32_t lvl = 0; lvl < c->LevelCount; lvl++){
@@ -843,8 +933,25 @@ extern "C" {
 		                    }
 		                    c->Hit(bbid, lvl, s->GetHits(memid, lvl));
 		                    c->Miss(bbid, lvl, s->GetMisses(memid, lvl));
+		                    c->Load(bbid, lvl, s->GetLoads(memid, lvl));
+		                    c->Store(bbid, lvl, s->GetStores(memid, lvl));			                    	                    
 		                }
 		            }
+		            if(c->HybridCache){
+				    for (uint32_t memid = 0; memid < st->InstructionCount; memid++){
+				            uint32_t bbid;
+				            if (st->PerInstruction){
+				                bbid = memid;
+				            } else {
+				                bbid = st->BlockIds[memid];
+				            }                    
+				            c->HybridHit(bbid,s->GetHybridHits(memid)) ;
+				            c->HybridMiss(bbid,s->GetHybridMisses(memid));  
+				            c->HybridLoad(bbid,s->GetHybridLoads(memid)); 
+				            c->HybridStore(bbid,s->GetHybridStores(memid));                   		
+				            	
+				    }
+		            }		            
 		            if(!c->Verify()) {
 		                warn << "Failed check on aggregated cache stats" << ENDL;
 		            }
@@ -942,8 +1049,27 @@ extern "C" {
 		                      << TAB << dec << (lvl+1)
 		                      << TAB << dec << c->GetHits(bbid, lvl)
 		                      << TAB << dec << c->GetMisses(bbid, lvl)
+		                      << TAB << dec << c->GetLoads(bbid,lvl)
+		                      << TAB << dec << c->GetStores(bbid,lvl)
 		                      << ENDL;
+		                      
 		                }
+					                   
+		                   if(HybridCacheStatus[sys])
+		                   {
+		                   	CacheHybridStructureHandler* CHSH=(CacheHybridStructureHandler*)stats->Handlers[sys] ;
+		                   	//MemFile<<"\n\t Yenge?? "<<CHSH->GetHits()<< TAB << dec<<CHSH->GetHits()<< TAB << dec<<CHSH->GetMisses()<<" bbid: "<<bbid<<" hits: "<<c->GetHybridHits(bbid)<<" misses: "<<c->GetHybridMisses(bbid)<<ENDL;
+		                   	
+		                      MemFile << TAB << dec << c->SysId
+				              << TAB << dec << (c->LevelCount)
+				              << TAB << dec << c->GetHybridHits(bbid)
+				              << TAB << dec << c->GetHybridMisses(bbid)
+				              << TAB << dec << c->GetHybridLoads(bbid) //,c->LevelCount-1)
+				              << TAB << dec << c->GetHybridStores(bbid) //,c->LevelCount-1)
+				              << ENDL;
+		                   	
+		                   }
+		                MemFile<<ENDL;
 		            }
                     }
                 }
@@ -973,7 +1099,8 @@ extern "C" {
         }
 
         RESTORE_STREAM_FLAGS(cout);
-*/
+
+/*	cout<<"\n\t Illi-1 ";
         uint64_t sampledCount = 0;
         uint64_t totalMemop = 0;
         for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
@@ -1035,7 +1162,7 @@ extern "C" {
                 << ENDL;
         }
         MemFile << ENDL;
-
+	cout<<"\n\t Illi-2 ";
         for (uint32_t sys = 0; sys < CountCacheStructures; sys++){
             for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
                 bool first = true;
@@ -1079,7 +1206,7 @@ extern "C" {
         }
 
 
-
+	cout<<"\n\t Illi-3 ";
         for (set<image_key_t>::iterator iit = AllData->allimages.begin(); iit != AllData->allimages.end(); iit++){
             for (set<thread_key_t>::iterator it = AllData->allthreads.begin(); it != AllData->allthreads.end(); it++){
 
@@ -1261,7 +1388,7 @@ extern "C" {
             delete NonmaxKeys;
         }
 
-        RESTORE_STREAM_FLAGS(cout);
+        RESTORE_STREAM_FLAGS(cout);*/
     }
 
 };

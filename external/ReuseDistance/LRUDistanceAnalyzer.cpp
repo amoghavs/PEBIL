@@ -1040,7 +1040,7 @@ void comp_lru_reuse_dis() {
   ULONG i;
   hrtime_t temp;
   if (processing_times % 128 == 0)
-    fprintf(stderr, "doing No.%llu buffer processing\n", processing_times);
+   // fprintf(stderr, "doing No.%llu buffer processing\n", processing_times);
   //printf("doing No.%llu buffer processing\n", processing_times);
   ++processing_times;
   temp = gethrcycle_x86();
@@ -1186,7 +1186,7 @@ void get_exclusive_MRU_data(ULONG bin_num_for_csz) {
  
 void OutputResults() {
 
-printf("\n\t In OutputResults() \n --- \n\n");
+//printf("\n\t In OutputResults() \n --- \n\n");
   ULONG i;
   comp_lru_reuse_dis();
   for (i=0;i<BIN_SIZE;i++) {
@@ -1229,11 +1229,11 @@ printf("\n\t In OutputResults() \n --- \n\n");
 void Init() {
 	if(init_notcalled)
 	{
-		std::cout<<"\n\t Init is being called! \n";
+	//	std::cout<<"\n\t Init is being called! \n";
 		init_notcalled=1;
 	}
-	else
-		std::cout<<"\n\t Init is being called while init_notcalled=0 !! \n";
+	//else
+	//	std::cout<<"\n\t Init is being called while init_notcalled=0 !! \n";
   ULONG i;
 
   total_time = gethrcycle_x86();
