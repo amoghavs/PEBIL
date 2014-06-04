@@ -897,7 +897,10 @@ extern "C" {
                 if(AddressRangeEnable)
                 {
 		        //RangeStats* aggrange = new RangeStats(st->InstructionCount);
-		        aggrange = new RangeStats(st->InstructionCount);
+		        if(st->PerInstruction)
+				aggrange = new RangeStats(st->InstructionCount);
+			else
+				aggrange= new RangeStats(st->BlockCount);
 		        for (uint32_t memid = 0; memid < st->InstructionCount; memid++){
 		            uint32_t bbid;
 		            RangeStats* r = (RangeStats*)st->Stats[RangeHandlerIndex];
@@ -1625,6 +1628,7 @@ void RangeStats::Update(uint32_t memid, uint64_t addr, uint32_t count){
     if (addr > r->Maximum){
         r->Maximum = addr;
     }
+
     Counts[memid] += count;
 }
 
