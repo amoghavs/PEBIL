@@ -2,7 +2,7 @@ namespace LRUDistanceAnalyzer
 {
 	#define VOID void
 	#define ADDR void *
-	#define INFINITE (unsigned long int)-1
+	#define INFINITE (unsigned long int)-2
 	#define OFFSET_SIZE 6
 	#define BUFFER_SIZE 4194304 
 	#define BIN_SIZE 32 

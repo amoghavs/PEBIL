@@ -3069,7 +3069,6 @@ bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uin
 SimulationStats* GenerateCacheStats(SimulationStats* stats, uint32_t typ, image_key_t iid, thread_key_t tid, image_key_t firstimage){
     assert(stats);
     SimulationStats* s = stats;
-
     // allocate Counters contiguously with SimulationStats. Since the address of SimulationStats is the
     // address of the thread data, this allows us to avoid an extra memory ref on Counter updates
     if (typ == AllData->ThreadType){
@@ -3216,6 +3215,7 @@ void ReadSettings(){
        AddressRangeEnable = 0;
     }    
     inform<<" Cache Simulation "<<CacheSimulation<<" AddressRangeEnable "<<AddressRangeEnable<<endl;
+    inform<<" Reuse Window "<<ReuseWindow<<" Spatial Window "<<SpatialWindow<<endl;
 
     // read caches to simulate
     string cachedf = GetCacheDescriptionFile();

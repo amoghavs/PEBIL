@@ -147,6 +147,7 @@ void ReuseDistance::SkipAddresses(uint64_t amount){
 
 void ReuseDistance::Process(ReuseEntry& r){
   uint64_t* BBStats= GetPINStats(r.id,true);
+  //cout<<" ^^ BIN_SIZE "<<BIN_SIZE<<endl;
   LRUDistanceAnalyzer::RecordMemAccess((void*)r.address,BBStats);
    return;
 /*    uint64_t addr = r.address;
@@ -277,16 +278,17 @@ void SpatialLocality::Print(ostream& f, bool annotate){
     }
     sort(BinTotalKeys.begin(), BinTotalKeys.end());
     uint64_t Total=0;
+    f<<"\n\n\t Bin \t\t Count ";
     for (vector<uint64_t>::const_iterator it = BinTotalKeys.begin(); it != BinTotalKeys.end(); it++)
     {
         uint64_t id = (*it);
-        uint64_t range=( (2*(id-1)) - id  );
-        if(id==0)
-        	range=0;
-	f<<"\n\t Bin: "<<id<<" Range: "<<range<<" Count: "<<BinTotal[id];
+        //uint64_t range=( (2*(id-1)) - id  );
+        //if(id==0)
+        //	range=0;
+	f<<"\n\t "<<id<<"\t\t\t "<<BinTotal[id];
 	Total+=BinTotal[id];
     }
-    f<<"\n\t Total Accesses: "<<Total;
+    f<<"\n\t Total Count: "<<Total;
     f<<endl;
       
     
@@ -295,7 +297,7 @@ void SpatialLocality::Print(ostream& f, bool annotate){
 
 void ReuseDistance::Print(ostream& f, bool annotate){
     //cout<<"\n\t Calling OutputResults!--! \n";
-    LRUDistanceAnalyzer::OutputResults();
+    //LRUDistanceAnalyzer::OutputResults();
     uint64_t total=0;
     uint64_t BinStats[BIN_SIZE];
     for(int i=0;i<BIN_SIZE;i++)
@@ -307,7 +309,8 @@ for(reuse_map_type<uint64_t,uint64_t*>::const_iterator it=PINReuseStats.begin();
 	{
 		if(it->second[i])
 		{
-		   f<<"\n\t I: "<<i<<" "<<((int)(pow(2,(i-1))+1))<<" : "<<((int)(pow(2,i)))<<" Hits: "<<it->second[i];
+		   //f<<"\n\t I: "<<dec<<i<<" "<<((long int)(pow(2,(i-1))+1))<<" : "<<((long int)(pow(2,i)))<<" Hits: "<<it->second[i];
+		   f<<"\n "<<TAB<<((long int)(pow(2,(i-1))+1))<<TAB<<((long int)(pow(2,i)))<<TAB<<" "<<it->second[i];
 		   total+=it->second[i];
 		   BinStats[i]+=it->second[i];
 		}
@@ -315,13 +318,14 @@ for(reuse_map_type<uint64_t,uint64_t*>::const_iterator it=PINReuseStats.begin();
 	}
 
 }
-//	f<<"\n\n";
-//	for(int i=0;i<BIN_SIZE;i++)
-//	{
-//	    if(BinStats[i])
-//	    f<<"\n\t Bin: "<<i<<dec<<" Hits: "<<BinStats[i];
-//	}
-//	f<<"\n\n\n\t Total hits: "<<total<<"\n\n";
+	f<<"\n\n";
+        f<<"\t Bin \t\t Count ";
+	for(int i=0;i<BIN_SIZE;i++)
+	{
+	    if(BinStats[i])
+	    f<<"\n\t "<<dec<<i<<"\t\t\t "<<BinStats[i];
+	}
+	f<<"\n\n\n\t Total Count: "<<total<<"\n\n";
     
     return;
  /*   vector<uint64_t> keys;
@@ -378,6 +382,11 @@ ReuseStats* ReuseDistance::GetStats(uint64_t id, bool gen){
 
 uint64_t* ReuseDistance::GetPINStats(uint64_t id, bool gen)
 {
+    if(BIN_SIZE ==20) 
+     {
+		cout<<"\n\t ++ BIN_SIZE "<<BIN_SIZE<<endl;
+		exit(-1);
+    }
     uint64_t* s = PINReuseStats[id];
     if (s == NULL && gen){
         s = new uint64_t[BIN_SIZE]; //ReuseStats(id, binindividual, capacity, ReuseDistance::Infinity);

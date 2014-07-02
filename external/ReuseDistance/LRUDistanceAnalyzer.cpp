@@ -1033,6 +1033,7 @@ void record_distance(ULLINT dis,void *data,uint64_t* BBStats) {
     }
   }
   ++hist[BIN_SIZE-1];
+  ++BBStats[BIN_SIZE-1];
   try_to_add_range(data, BIN_SIZE-1);
 }
 
@@ -1253,8 +1254,8 @@ void Init() {
     hash_table[i] = NULL;
   allocate_hash_nodes();
 
-  output_file = fopen("LRU_dis.dat", "w");
-  result_file = fopen("LRU_results.txt", "w");
+//  output_file = fopen("LRU_dis.dat", "w");
+//  result_file = fopen("LRU_results.txt", "w");
 
   current_state = PLAIN;
   mem_unit_list = NULL;
