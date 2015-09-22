@@ -182,48 +182,6 @@ bool BasicBlock::isInLoop(){
     return flowGraph->isBlockInLoop(getIndex());
 }
 
-uint32_t BasicBlock::searchForArgsPrep(bool is64Bit){
-    ASSERT(containsCallToRange(0,-1));
-    uint32_t argsToSearch = Num__64_bit_StackArgs;
-
-    bool foundArgs[argsToSearch];
-    bzero(foundArgs, sizeof(bool) * argsToSearch);
-
-    uint32_t numArgs = 0;
-    if (is64Bit){
-        for (uint32_t i = 0; i < instructions.size(); i++){
-            //            instructions[i]->print();
-            if (instructions[i]->getInstructionType() == X86InstructionType_int ||
-                instructions[i]->getInstructionType() == X86InstructionType_move){
-                OperandX86* destOp = instructions[i]->getOperand(DEST_OPERAND);
-
-                if (!destOp->getValue()){
-                    for (uint32_t j = 0; j < Num__64_bit_StackArgs; j++){
-                        if (destOp->getBaseRegister() == map64BitArgToReg(j)){
-                            foundArgs[j] = true;
-                        }
-                    }
-                }
-                //                instructions[i]->getOperand(DEST_OPERAND)->print();
-            }
-        }
-    } else {
-        __FUNCTION_NOT_IMPLEMENTED;
-    }
-
-    for (uint32_t i = 0; i < argsToSearch; i++){
-        if (foundArgs[i]){
-            numArgs++;
-        } else {
-            break;
-        }
-    }
-
-    PRINT_INFOR("found %d args ------------------------------------------------------", numArgs);
-
-    return numArgs;
-}
-
 uint64_t CodeBlock::getProgramAddress(){
     ASSERT(instructions.size());
     for (uint32_t i = 0; i < instructions.size(); i++){
@@ -329,22 +287,9 @@ uint32_t BasicBlock::getNumberOfStringOps(){
 uint32_t BasicBlock::getNumberOfMemoryOps(){
     uint32_t memCount = 0;
     for (uint32_t i = 0; i < instructions.size(); i++){
-       // if (instructions[i]->isMemoryOperation()){
-       //     memCount++;
-       // }
-       if (instructions[i]->isMemoryOperation())
-       {
-	       if(instructions[i]->isLoad())
-	       {
-		       	memCount++;
-	       }
-	       if(instructions[i]->isStore())
-	       {
-		       	memCount++;
-	       }
-       }
-       
-       
+        if (instructions[i]->isMemoryOperation()){
+            memCount++;
+        }
     }
     return memCount;
 }
@@ -416,6 +361,26 @@ uint32_t BasicBlock::getNumberOfLogicOps(){
         }
     }
     return logicOpCount;
+}
+
+uint32_t BasicBlock::getNumberOfScatterGatherOps(){
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < instructions.size(); i++){
+        if (instructions[i]->isScatterGatherOp()){
+            count++;
+        }
+    }
+    return count;
+}
+
+uint32_t BasicBlock::getNumberOfVectorMaskOps(){
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < instructions.size(); i++){
+        if (instructions[i]->isVectorMaskOp()){
+            count++;
+        }
+    }
+    return count;
 }
 
 uint32_t BasicBlock::getNumberOfBranches(){
@@ -632,6 +597,16 @@ uint32_t BasicBlock::getNumberOfBinIntv(){
     uint32_t binCount = 0;
     for (uint32_t i = 0; i < instructions.size(); i++){
         if (instructions[i]->isBinIntv()){
+            binCount++;
+        }
+    }
+    return binCount;
+}
+
+uint32_t BasicBlock::getNumberOfBinInts(){
+    uint32_t binCount = 0;
+    for (uint32_t i = 0; i < instructions.size(); i++){
+        if (instructions[i]->isBinInts()){
             binCount++;
         }
     }
@@ -980,7 +955,7 @@ uint32_t CodeBlock::getNumberOfBytes(){
     return numberOfBytes;
 }
 
-bool BasicBlock::inRange(uint64_t addr){
+bool CodeBlock::inRange(uint64_t addr){
     uint64_t b = getBaseAddress();
     if (addr < b){
         return false;

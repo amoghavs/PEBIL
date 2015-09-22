@@ -54,7 +54,6 @@ typedef struct {
     uint64_t    memseq;
     uint64_t    imageid;
     uint64_t    threadid;
-    uint64_t	loadstoreflag;      
 } BufferEntry;
 #define __buf_current  address
 #define __buf_capacity memseq
