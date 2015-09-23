@@ -43,6 +43,10 @@ extern "C" {
     }
 }
 
+/*
+ * Read input file and create a list of blocks to instrument
+ * initializes blocksToInst
+ */
 void CacheSimulation::filterBBs(){
     Vector<char*>* fileLines = new Vector<char*>();
     if (!strcmp("+", inputFile)){
@@ -54,8 +58,6 @@ void CacheSimulation::filterBBs(){
 
         initializeFileList(inputFile, fileLines);
 
-        int32_t err;
-        uint64_t inputHash;
         for (uint32_t i = 0; i < (*fileLines).size(); i++){
             char* ptr = strchr((*fileLines)[i],'#');
             if(ptr) *ptr = '\0';
@@ -63,24 +65,22 @@ void CacheSimulation::filterBBs(){
             if(!strlen((*fileLines)[i]) || allSpace((*fileLines)[i]))
                 continue;
 
-            err = sscanf((*fileLines)[i], "%lld", &inputHash);
+            int32_t err;
+            uint64_t inputHash = 0;
+            uint64_t imgHash = 0;
+
+            err = sscanf((*fileLines)[i], "%llx %llx", &inputHash, &imgHash);
             if(err <= 0){
                 PRINT_ERROR("Line %d of %s has a wrong format", i+1, inputFile);
             }
+
+            // First number is a blockhash
             HashCode* hashCode = new HashCode(inputHash);
-            if(isPerInstruction() && !hashCode->isBlock() && !hashCode->isInstruction() ||
-              !isPerInstruction() && !hashCode->isBlock()){
-                    
-                err = sscanf((*fileLines)[i], "%llx", &inputHash);
-                if(err <= 0){
-                    PRINT_ERROR("Line %d of %s has a wrong format", i+1, inputFile);
-                }
-                hashCode = new HashCode(inputHash);
-                if(isPerInstruction() && !hashCode->isBlock() && !hashCode->isInstruction() ||
-                  !isPerInstruction() && !hashCode->isBlock()){
-                    PRINT_ERROR("Line %d of %s is a wrong unique id for a basic block/instruction", i+1, inputFile);
-                }
-            }
+
+            // Second number, if present, is image id
+            if(err == 2 && getElfFile()->getUniqueId() != imgHash)
+                continue;
+
             BasicBlock* bb = findExposedBasicBlock(*hashCode);
             delete hashCode;
 
@@ -135,8 +135,7 @@ CacheSimulation::CacheSimulation(ElfFile* elf)
     exitFunc = NULL;
     entryFunc = NULL;
 
-  //  ASSERT(isPowerOfTwo(sizeof(BufferEntry)));
-  // printf("\n\t FYI: sizeof(BufferEntry) is not checked for being power of two!!! \n");
+    ASSERT(isPowerOfTwo(sizeof(BufferEntry)));  // printf("\n\t FYI: sizeof(BufferEntry) is not checked for being power of two!!! \n");
 }
 
 
@@ -189,15 +188,10 @@ void CacheSimulation::instrument(){
             blockSeq++;
             Function* f = (Function*)bb->getLeader()->getContainer();
             functionsToInst.insert(f);
-            // printf("\n\t New block starting at prog-addr: %d ",bb->getProgramAddress());
             for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
                 X86Instruction* memop = bb->getInstruction(j);
                 if (memop->isMemoryOperation()){
-                    if(memop->isLoad())
-                    	memopSeq++;
-                    if(memop->isStore())
-                    	memopSeq++;                    	
-                   // printf("\n\t This is a memop with prog-id: %d , isStore(): %d isLoad(): %d ",memop->getProgramAddress(), memop->isStore(),memop->isLoad());
+                    memopSeq++;
                 }
             }
         }
@@ -212,7 +206,7 @@ void CacheSimulation::instrument(){
     Vector<uint32_t>* allBlockIds = new Vector<uint32_t>();
     Vector<LineInfo*>* allBlockLineInfos = new Vector<LineInfo*>();
 
-    std::map<uint64_t, uint32_t>* functionThreading;
+    std::map<uint64_t, ThreadRegisterMap*>* functionThreading;
     if (usePIC){
         functionThreading = threadReadyCode(functionsToInst);
     }
@@ -226,7 +220,7 @@ void CacheSimulation::instrument(){
 
     stats.Initialized = true;
     stats.InstructionCount = memopSeq;
-    stats.Master = getElfFile()->isExecutable();
+    stats.Master = isMasterImage();
     stats.Phase = phaseNo;
     stats.Stats = NULL;
     if (isPerInstruction()){
@@ -279,17 +273,18 @@ void CacheSimulation::instrument(){
     uint64_t ext = reserveDataOffset(strlen(extName) + 1);
     initializeReservedPointer(ext, simulationStruct + offsetof(SimulationStats, Extension));
     initializeReservedData(getInstDataAddress() + ext, strlen(extName) + 1, (void*)extName);
-
     initializeReservedData(getInstDataAddress() + simulationStruct, sizeof(SimulationStats), (void*)(&stats));
 
+    // Add arguments to instrumentation functions
     entryFunc->addArgument(simulationStruct);
     entryFunc->addArgument(imageKey);
     entryFunc->addArgument(threadHash);
-
+	simFunc->addArgument(imageKey);
+    exitFunc->addArgument(imageKey);
 
     InstrumentationPoint* p;
 
-    // ALL_FUNC_ENTER
+    // Setup the entry point(s) for this image to call entryFunc to do initialization
     if (isMultiImage()){
         for (uint32_t i = 0; i < getNumberOfExposedFunctions(); i++){
             Function* f = getExposedFunction(i);
@@ -312,13 +307,10 @@ void CacheSimulation::instrument(){
         }
     }
 
-    simFunc->addArgument(imageKey);
-    uint64_t imageHash = getElfFile()->getUniqueId();
-
     // TODO: remove all FP work from cache simulation?
-    // simFunc->assumeNoFunctionFP();
-    exitFunc->addArgument(imageKey);
+    //simFunc->assumeNoFunctionFP();
 
+	// Instrument exit block to call exitFunc
     p = addInstrumentationPoint(getProgramExitBlock(), exitFunc, InstrumentationMode_tramp);
     ASSERT(p);
     p->setPriority(InstPriority_sysinit);
@@ -326,6 +318,9 @@ void CacheSimulation::instrument(){
         PRINT_ERROR("Cannot find an instrumentation point at the exit function");
     }
 
+	uint64_t imageHash = getElfFile()->getUniqueId();
+
+    /* Begin instrumenting each block in the function */
     blockSeq = 0;
     memopSeq = 0;
     uint32_t currentLeader = 0;
@@ -335,192 +330,202 @@ void CacheSimulation::instrument(){
     for (uint32_t i = 0; i < getNumberOfExposedBasicBlocks(); i++){
         BasicBlock* bb = getExposedBasicBlock(i);
         Function* f = (Function*)bb->getLeader()->getContainer();
+ 
+       // Check if we should skip this block
+        if (!blocksToInst.get(bb->getHashCode().getValue()))
+            continue;
 
         uint32_t threadReg = X86_REG_INVALID;
         if (usePIC){
-            threadReg = (*functionThreading)[f->getBaseAddress()];
+            ThreadRegisterMap* threadMap = (*functionThreading)[f->getBaseAddress()];
+            threadReg = threadMap->getThreadRegister(bb);
         }
 
-        if (blocksToInst.get(bb->getHashCode().getValue())){
 
-            if (!isPerInstruction()){
-                LineInfo* li = NULL;
-                if (lineInfoFinder){
-                    li = lineInfoFinder->lookupLineInfo(bb);
-                }
-            
-                (*allBlocks).append(bb);
-                (*allBlockIds).append(i);
-                (*allBlockLineInfos).append(li);
+        if (!isPerInstruction()){
+            LineInfo* li = NULL;
+            if (lineInfoFinder){
+                li = lineInfoFinder->lookupLineInfo(bb);
+            }
+        
+            (*allBlocks).append(bb);
+            (*allBlockIds).append(i);
+            (*allBlockLineInfos).append(li);
 
-                if (li){
-                    uint32_t line = li->GET(lr_line);
-                    initializeReservedData(getInstDataAddress() + (uint64_t)stats.Lines + sizeof(uint32_t)*blockSeq, sizeof(uint32_t), &line);
+            if (li){
+                uint32_t line = li->GET(lr_line);
+                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Lines + sizeof(uint32_t)*blockSeq, sizeof(uint32_t), &line);
 
-                    uint64_t filename = reserveDataOffset(strlen(li->getFileName()) + 1);
-                    initializeReservedPointer(filename, (uint64_t)stats.Files + blockSeq*sizeof(char*));
-                    initializeReservedData(getInstDataAddress() + filename, strlen(li->getFileName()) + 1, (void*)li->getFileName());
-                } else {
-                    temp32 = 0;
-                    initializeReservedData(getInstDataAddress() + (uint64_t)stats.Lines + sizeof(uint32_t)*blockSeq, sizeof(uint32_t), &temp32);
-                    initializeReservedPointer(noData, (uint64_t)stats.Files + blockSeq*sizeof(char*));
-                }
-
-                uint64_t funcname = reserveDataOffset(strlen(f->getName()) + 1);
-                initializeReservedPointer(funcname, (uint64_t)stats.Functions + blockSeq*sizeof(char*));
-                initializeReservedData(getInstDataAddress() + funcname, strlen(f->getName()) + 1, (void*)f->getName());
-
-                uint64_t hashValue = bb->getHashCode().getValue();
-                uint64_t addr = bb->getProgramAddress();        
-
-                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Hashes + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &hashValue);
-                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Addresses + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &addr);
-
-                CounterTypes tmpct = CounterType_basicblock;
-                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Types + blockSeq*sizeof(CounterTypes), sizeof(CounterTypes), &tmpct);
-
-                temp64 = 0;
-                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Counters + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &temp64);
-
-                temp32 = bb->getNumberOfMemoryOps();
-                initializeReservedData(getInstDataAddress() + (uint64_t)stats.MemopsPerBlock + blockSeq*sizeof(uint32_t), sizeof(uint32_t), &temp32);
+                uint64_t filename = reserveDataOffset(strlen(li->getFileName()) + 1);
+                initializeReservedPointer(filename, (uint64_t)stats.Files + blockSeq*sizeof(char*));
+                initializeReservedData(getInstDataAddress() + filename, strlen(li->getFileName()) + 1, (void*)li->getFileName());
+            } else {
+                temp32 = 0;
+                initializeReservedData(getInstDataAddress() + (uint64_t)stats.Lines + sizeof(uint32_t)*blockSeq, sizeof(uint32_t), &temp32);
+                initializeReservedPointer(noData, (uint64_t)stats.Files + blockSeq*sizeof(char*));
             }
 
-            uint32_t memopIdInBlock = 0;
-            for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
-                X86Instruction* memop = bb->getInstruction(j);
-                uint64_t currentOffset = (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current);
+            uint64_t funcname = reserveDataOffset(strlen(f->getName()) + 1);
+            initializeReservedPointer(funcname, (uint64_t)stats.Functions + blockSeq*sizeof(char*));
+            initializeReservedData(getInstDataAddress() + funcname, strlen(f->getName()) + 1, (void*)f->getName());
 
-                if (usePIC){
-                    currentOffset -= (uint64_t)stats.Buffer;
-                }
+            uint64_t hashValue = bb->getHashCode().getValue();
+            uint64_t addr = bb->getProgramAddress();        
 
-                if (memop->isMemoryOperation()){
-                    // at the first memop in each block, check for a full buffer, clear if full
-                    if (memopIdInBlock == 0){
+            initializeReservedData(getInstDataAddress() + (uint64_t)stats.Hashes + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &hashValue);
+            initializeReservedData(getInstDataAddress() + (uint64_t)stats.Addresses + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &addr);
 
-                        // set up a block counter that is distinct from all other inst points in the block
-                        if (!isPerInstruction()){
-                            uint64_t counterOffset = (uint64_t)stats.Counters + (blockSeq * sizeof(uint64_t));
+            CounterTypes tmpct = CounterType_basicblock;
+            initializeReservedData(getInstDataAddress() + (uint64_t)stats.Types + blockSeq*sizeof(CounterTypes), sizeof(CounterTypes), &tmpct);
 
-                            if (usePIC){
-                                counterOffset -= simulationStruct;
-                            }
-                            InstrumentationTool::insertBlockCounter(counterOffset, bb, true, threadReg);
-                        }
+            temp64 = 0;
+            initializeReservedData(getInstDataAddress() + (uint64_t)stats.Counters + blockSeq*sizeof(uint64_t), sizeof(uint64_t), &temp64);
 
-                        // grab 2 scratch registers
-                        uint32_t sr1 = X86_REG_INVALID, sr2 = X86_REG_INVALID;
-                        
-                        BitSet<uint32_t>* inv = new BitSet<uint32_t>(X86_ALU_REGS);
-                        inv->insert(X86_REG_AX);
-                        inv->insert(X86_REG_SP);
-                        inv->insert(X86_REG_BP);
-                        if (threadReg != X86_REG_INVALID){
-                            inv->insert(threadReg);
-                            sr1 = threadReg;
-                        }
-                        for (uint32_t k = X86_64BIT_GPRS; k < X86_ALU_REGS; k++){
-                            inv->insert(k);
-                        }
-                        BitSet<uint32_t>* dead = memop->getDeadRegIn(inv, 2);
-                        ASSERT(dead->size() >= 2);
+            temp32 = bb->getNumberOfMemoryOps();
+            initializeReservedData(getInstDataAddress() + (uint64_t)stats.MemopsPerBlock + blockSeq*sizeof(uint32_t), sizeof(uint32_t), &temp32);
+        }
 
-                        for (uint32_t k = 0; k < X86_64BIT_GPRS; k++){
-                            if (dead->contains(k)){
-                                if (sr1 == X86_REG_INVALID){
-                                    sr1 = k;
-                                } else if (sr2 == X86_REG_INVALID){
-                                    sr2 = k;
-                                    break;
-                                }
-                            }
-                                //printf("\n\t Dead->contains(k): %d ",dead->contains(k));                            
-                        }
-                        //printf("\n\t sr1: %d sr2: %d ",sr1,sr2);
-                        delete inv;
-                        delete dead;
+        uint32_t memopIdInBlock = 0;
+        for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
+            X86Instruction* memop = bb->getInstruction(j);
+            uint64_t currentOffset = (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current);
 
-                        InstrumentationPoint* pt = addInstrumentationPoint(memop, simFunc, InstrumentationMode_tramp, InstLocation_prior);
-                        pt->setPriority(InstPriority_userinit);
-                        dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_buffercheck), true);
-                        Vector<X86Instruction*>* bufferDumpInstructions = new Vector<X86Instruction*>();
+            if (usePIC){
+                currentOffset -= (uint64_t)stats.Buffer;
+            }
 
-                        // put current buffer into sr2
-                        // if thread data addr is not in sr1 already, load it
-                        if (threadReg == X86_REG_INVALID && usePIC){
-                            Vector<X86Instruction*>* tdata = storeThreadData(sr2, sr1);
-                            for (uint32_t k = 0; k < tdata->size(); k++){
-                                bufferDumpInstructions->append((*tdata)[k]);
-                            }
-                            delete tdata;
-                        }
-                        
-                        if (usePIC){
-                            bufferDumpInstructions->append(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
-                        } else {
-                            bufferDumpInstructions->append(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
-                        }
-                        bufferDumpInstructions->append(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr2, offsetof(BufferEntry, __buf_current), sr2));                            
+            if (memop->isMemoryOperation()){
+                // at the first memop in each block, check for a full buffer, clear if full
+                if (memopIdInBlock == 0){
 
-                        // compare current buffer to buffer max
-                        bufferDumpInstructions->append(X86InstructionFactory64::emitCompareImmReg(BUFFER_ENTRIES - bb->getNumberOfMemoryOps(), sr2));
-
-                        // jump to non-buffer-jump code
-                        bufferDumpInstructions->append(X86InstructionFactory::emitBranchJL(Size__64_bit_inst_function_call_support));
-
-                        ASSERT(bufferDumpInstructions);
-                        while (bufferDumpInstructions->size()){
-                            pt->addPrecursorInstruction(bufferDumpInstructions->remove(0));
-                        }
-
-                        delete bufferDumpInstructions;
-
-                        // if we include the buffer increment as part of the buffer check, it increments the buffer pointer even when we try to disable this point during buffer clearing
-                        InstrumentationSnippet* snip = addInstrumentationSnippet();
-                        pt = addInstrumentationPoint(memop, snip, InstrumentationMode_inline, InstLocation_prior);
-                        pt->setPriority(InstPriority_regular);
-                        dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_bufferinc), true);
-
-                        if (threadReg == X86_REG_INVALID && usePIC){
-                            Vector<X86Instruction*>* tdata = storeThreadData(sr2, sr1);
-                            for (uint32_t k = 0; k < tdata->size(); k++){
-                                snip->addSnippetInstruction((*tdata)[k]);
-                            }
-                            delete tdata;
-                        }
+                    // set up a block counter that is distinct from all other inst points in the block
+                    if (!isPerInstruction()){
+                        uint64_t counterOffset = (uint64_t)stats.Counters + (blockSeq * sizeof(uint64_t));
 
                         if (usePIC){
-                            snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
-                            snip->addSnippetInstruction(X86InstructionFactory64::emitAddImmToRegaddrImm(bb->getNumberOfMemoryOps(), sr2, offsetof(BufferEntry, __buf_current)));
-                        } else {
-                            snip->addSnippetInstruction(X86InstructionFactory64::emitAddImmToMem(bb->getNumberOfMemoryOps(), getInstDataAddress() + currentOffset));
+                            counterOffset -= simulationStruct;
                         }
+                        InstrumentationTool::insertBlockCounter(counterOffset, bb, true, threadReg);
                     }
 
-		    loadflag=(memop->isLoad());
-		    storeflag=(memop->isStore());
-		    loadstoreflag=(loadflag&&storeflag);
-		    int RepeatLoop=0,RepeatLoopIdx=0;
-		    if(loadstoreflag)
-		    	RepeatLoop=2;
-		    else
-		    	RepeatLoop=1;
-		   // printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);		    
-		    for(RepeatLoopIdx=0;RepeatLoopIdx<RepeatLoop;RepeatLoopIdx++)
-		    {
-		    	if(RepeatLoopIdx)
-		    		loadstoreflag=0; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
-		    	else
-		    		loadstoreflag=loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
+                    // grab 2 scratch registers
+                    uint32_t sr1 = X86_REG_INVALID, sr2 = X86_REG_INVALID;
+                    
+                    BitSet<uint32_t>* inv = new BitSet<uint32_t>(X86_ALU_REGS);
+                    inv->insert(X86_REG_AX);
+                    inv->insert(X86_REG_SP);
+                    inv->insert(X86_REG_BP);
+                    if (threadReg != X86_REG_INVALID){
+                        inv->insert(threadReg);
+                        sr1 = threadReg;
+                    }
+                    for (uint32_t k = X86_64BIT_GPRS; k < X86_ALU_REGS; k++){
+                        inv->insert(k);
+                    }
+                    BitSet<uint32_t>* dead = memop->getDeadRegIn(inv, 2);
+                    ASSERT(dead->size() >= 2);
 
-                    // at every memop, fill a buffer entry
+                    for (uint32_t k = 0; k < X86_64BIT_GPRS; k++){
+                        if (dead->contains(k)){
+                            if (sr1 == X86_REG_INVALID){
+                                sr1 = k;
+                            } else if (sr2 == X86_REG_INVALID){
+                                sr2 = k;
+                                break;
+                            }
+                        }
+                    }
+                    ASSERT(sr1 != X86_REG_INVALID && sr2 != X86_REG_INVALID);
+
+                    delete inv;
+                    delete dead;
+                    InstrumentationPoint* pt = addInstrumentationPoint(memop, simFunc, InstrumentationMode_tramp, InstLocation_prior);
+                    pt->setPriority(InstPriority_userinit);
+                    dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_buffercheck), true);
+                    Vector<X86Instruction*>* bufferDumpInstructions = new Vector<X86Instruction*>();
+
+                    // put current buffer into sr2
+                    // if thread data addr is not in sr1 already, load it
+                    if (threadReg == X86_REG_INVALID && usePIC){
+                        Vector<X86Instruction*>* tdata = storeThreadData(sr2, sr1);
+                        for (uint32_t k = 0; k < tdata->size(); k++){
+                            bufferDumpInstructions->append((*tdata)[k]);
+                        }
+                        delete tdata;
+                    }
+                    
+                    if (usePIC){
+                        // sr2 =((SimulationStats)sr1)->Buffer
+                        bufferDumpInstructions->append(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
+                    } else {
+                        // sr2 = stats.Buffer
+                        //bufferDumpInstructions->append(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
+                        bufferDumpInstructions->append(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer, sr2));
+                    }
+                    // sr2 = ((BufferEntry)sr2)->__buf_current
+                    bufferDumpInstructions->append(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr2, offsetof(BufferEntry, __buf_current), sr2));                            
+
+                    // compare current buffer to buffer max
+                    bufferDumpInstructions->append(X86InstructionFactory64::emitCompareImmReg(BUFFER_ENTRIES - bb->getNumberOfMemoryOps(), sr2));
+
+                    // jump to non-buffer-jump code
+                    bufferDumpInstructions->append(X86InstructionFactory::emitBranchJL(Size__64_bit_inst_function_call_support));
+
+                    ASSERT(bufferDumpInstructions);
+                    while (bufferDumpInstructions->size()){
+                        pt->addPrecursorInstruction(bufferDumpInstructions->remove(0));
+                    }
+                    delete bufferDumpInstructions;
+
+                    // Increment current buffer size
+                    // if we include the buffer increment as part of the buffer check, it increments the buffer pointer even when we try to disable this point during buffer clearing
+                    InstrumentationSnippet* snip = addInstrumentationSnippet();
+                    pt = addInstrumentationPoint(memop, snip, InstrumentationMode_inline, InstLocation_prior);
+                    pt->setPriority(InstPriority_regular);
+                    dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_bufferinc), true);
+
+                    // sr1 = stats
+                    if (threadReg == X86_REG_INVALID && usePIC){
+                        Vector<X86Instruction*>* tdata = storeThreadData(sr2, sr1);
+                        for (uint32_t k = 0; k < tdata->size(); k++){
+                            snip->addSnippetInstruction((*tdata)[k]);
+                        }
+                        delete tdata;
+                    }
+
+                    if (usePIC){
+                        // sr2 = ((SimulationStats*)sr1)->Buffer
+                        snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
+                        // ((BufferEntry*)sr2)->__buf_current++
+                        snip->addSnippetInstruction(X86InstructionFactory64::emitAddImmToRegaddrImm(bb->getNumberOfMemoryOps(), sr2, offsetof(BufferEntry, __buf_current)));
+                    } else {
+                        // stats.Buffer[0].__buf_current++
+                        snip->addSnippetInstruction(X86InstructionFactory64::emitAddImmToMem(bb->getNumberOfMemoryOps(), getInstDataAddress() + currentOffset));
+                    }
+                } // END first memop instrumentation
+
+                loadflag=(memop->isLoad());
+                storeflag=(memop->isStore());
+                loadstoreflag=(loadflag&&storeflag);
+                int RepeatLoop=0,RepeatLoopIdx=0;
+                if(loadstoreflag)
+                    RepeatLoop=2;
+                else
+                    RepeatLoop=1;
+                // printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);          
+                for(RepeatLoopIdx=0;RepeatLoopIdx<RepeatLoop;RepeatLoopIdx++){
+                    if(RepeatLoopIdx)
+                        loadstoreflag=0; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
+                    else
+                        loadstoreflag=loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
+
+                        // at every memop, fill a buffer entry
                     InstrumentationSnippet* snip = addInstrumentationSnippet();
                     InstrumentationPoint* pt = addInstrumentationPoint(memop, snip, InstrumentationMode_trampinline, InstLocation_prior);
                     pt->setPriority(InstPriority_low);
                     dynamicPoint(pt, GENERATE_KEY(blockSeq, PointType_bufferfill), true);
 
-                     // grab 3 scratch registers
+                         // grab 3 scratch registers
                     uint32_t sr1 = X86_REG_INVALID, sr2 = X86_REG_INVALID, sr3 = X86_REG_INVALID;
 
                     BitSet<uint32_t>* inv = new BitSet<uint32_t>(X86_ALU_REGS);
@@ -531,7 +536,7 @@ void CacheSimulation::instrument(){
                         inv->insert(threadReg);
                         sr1 = threadReg;
                     }
-                    
+                        
                     RegisterSet* regused = memop->getUnusableRegisters();
                     for (uint32_t k = 0; k < X86_64BIT_GPRS; k++){
                         if (regused->containsRegister(k)){
@@ -554,18 +559,16 @@ void CacheSimulation::instrument(){
                             } else if (sr3 == X86_REG_INVALID){
                                 sr3 = k;
                                 break;
-                                
-                            }                     
-                                                           
+                            }
                         }
-                       // printf("\n\t Dead->contains(k): %d ",dead->contains(k)); 
-
                     }
-                    // printf("\n\t sr1: %d sr2: %d sr3: %d ",sr1,sr2,sr3);
+
+                    ASSERT(sr1 != X86_REG_INVALID && sr2 != X86_REG_INVALID && sr3 != X86_REG_INVALID); // printf("\n\t sr1: %d sr2: %d sr3: %d ",sr1,sr2,sr3);
                     delete inv;
                     delete dead;
 
                     // if thread data addr is not in sr1 already, load it
+                    // sr1 = stats
                     if (threadReg == X86_REG_INVALID && usePIC){
                         Vector<X86Instruction*>* tdata = storeThreadData(sr2, sr1);
                         for (uint32_t k = 0; k < tdata->size(); k++){
@@ -573,25 +576,29 @@ void CacheSimulation::instrument(){
                         }
                         delete tdata;
                     }
-		    
+
                     if (usePIC){
+                        // sr2 = ((SimulationStats*)sr1)->Buffer
                         snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
                     } else {
-                        snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
+                        // sr2 = stats.Buffer
+                        //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
+                        snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer, sr2));
                     }
+                    // sr3 = ((BufferEntry*)sr2)->__buf_current;
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr2, offsetof(BufferEntry, __buf_current), sr3));
-                    snip->addSnippetInstruction(X86InstructionFactory64::emitRegImmMultReg(sr3, sizeof(BufferEntry), sr3));
-                    //snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
+                    // snip->addSnippetInstruction(X86InstructionFactory64::emitRegImmMultReg(sr3, sizeof(BufferEntry), sr3));
+                    // sr3 = shl 5 sr3 
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
 
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
                     // sr3 holds the offset (in bytes) of the access
-		   
-		   // printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq) ;
+
                     ASSERT(memopIdInBlock < bb->getNumberOfMemoryOps());
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));
-                      // sr2 now holds the base of this memop's buffer entry
+                    // sr2 now holds the base of this memop's buffer entry
 
                     Vector<X86Instruction*>* addrStore = X86InstructionFactory64::emitAddressComputation(memop, sr3);
                     while (!(*addrStore).empty()){
@@ -599,18 +606,18 @@ void CacheSimulation::instrument(){
                     }
                     delete addrStore;
                     // sr3 holds the memory address being used by memop
-                     // put the 4 elements of a BufferEntry into place
+                    // put the 4 elements of a BufferEntry into place
  
                     //loadstoreflag=(memop->isLoad());//(memop->isLoad());   
                     //loadstoreflag=loadstoreflag<<1;   
-                   // printf("\n\t  loadstoreflag: %d ",loadstoreflag);            
+                    // printf("\n\t  loadstoreflag: %d ",loadstoreflag);            
                     //loadstoreflag|= 0b10;
                     //loadstoreflag|=(memop->isStore());
                     //printf("\n\t memop->isLoad(): %d  memop->isStore(): %d loadstoreflag: %d",memop->isLoad(),memop->isStore(),loadstoreflag);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
-                     // this uses the value stored in the image key storage location
+                    // this uses the value stored in the image key storage location
                     //snip->addSnippetInstruction(linkInstructionToData(X86InstructionFactory64::emitLoadRipImmReg(0, sr3), this, getInstDataAddress() + imageKey, false));
                     //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr3, 0, sr3));
                     //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, imageid), true));
@@ -620,13 +627,13 @@ void CacheSimulation::instrument(){
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, loadstoreflag), true));                      
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveThreadIdToReg(sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, threadid), true));
- 
+
                     if (isPerInstruction()){
                         LineInfo* li = NULL;
                         if (lineInfoFinder){
                             li = lineInfoFinder->lookupLineInfo(memop);
                         }
- 
+
                         (*allBlocks).append(memop);
                         (*allBlockIds).append(j);
                         (*allBlockLineInfos).append(li);
@@ -692,11 +699,11 @@ void CacheSimulation::instrument(){
 
                     memopIdInBlock++;
                     memopSeq++;
-                    }
                 }
             }
-            blockSeq++;
         }
+        blockSeq++;
+        
     }
 
     char* extension = new char[__MAX_STRING_SIZE];
