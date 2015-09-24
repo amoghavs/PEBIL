@@ -135,7 +135,7 @@ CacheSimulation::CacheSimulation(ElfFile* elf)
     exitFunc = NULL;
     entryFunc = NULL;
 
-    // ASSERT(isPowerOfTwo(sizeof(BufferEntry)));  
+    //ASSERT(isPowerOfTwo(sizeof(BufferEntry)));  
     PRINT_WARN(20,"\n\t WARNING: sizeof(BufferEntry) is not checked for being power of two!!! ");
 }
 
@@ -191,7 +191,11 @@ void CacheSimulation::instrument(){
             functionsToInst.insert(f);
             for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
                 X86Instruction* memop = bb->getInstruction(j);
-                if (memop->isMemoryOperation()){
+                //if (memop->isMemoryOperation()){
+                if (memop->isLoad()){
+                    memopSeq++;
+                }
+                if (memop->isStore()){
                     memopSeq++;
                 }
             }
@@ -387,7 +391,6 @@ void CacheSimulation::instrument(){
         }
 
         uint32_t memopIdInBlock = 0;
-        uint32_t memopCountAdjust = 0; // Adjusting count of memops -- since two entries are added for 'a' memop which is both load and store memop.
         for (uint32_t j = 0; j < bb->getNumberOfInstructions(); j++){
             X86Instruction* memop = bb->getInstruction(j);
             uint64_t currentOffset = (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current);
@@ -517,10 +520,7 @@ void CacheSimulation::instrument(){
                 // printf("\n\t Load: %d Store: %d LoadStore: %d RepeatLoop: %d ",loadflag,storeflag,loadstoreflag,RepeatLoop);          
                 for(RepeatLoopIdx=0;RepeatLoopIdx<RepeatLoop;RepeatLoopIdx++){
                     if(RepeatLoopIdx)
-                    {
                         loadstoreflag=0; // Should definitely mean this 'memop' is both load and store. Hence, in previous iteration(of RepeatLoopIdx), BufferEntry pertaining to memop(Load) is sent.
-                        memopCountAdjust+=1;
-                    }
                     else
                         loadstoreflag=loadflag; // If RepeatLoop=1 ==> either load/store, hence loadflag will represent the memop nature aptly. If RepeatLoop=2, Then memop is L&S and this BufferEntry should belong to memop(Load)
 
@@ -587,20 +587,20 @@ void CacheSimulation::instrument(){
                         snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr1, offsetof(SimulationStats, Buffer), sr2));
                     } else {
                         // sr2 = stats.Buffer
-                        //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
-                        snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer, sr2));
+                        snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer + offsetof(BufferEntry, __buf_current), sr2));
+                        //snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(getInstDataAddress() + (uint64_t)stats.Buffer, sr2));
                     }
                     // sr3 = ((BufferEntry*)sr2)->__buf_current;
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegaddrImmToReg(sr2, offsetof(BufferEntry, __buf_current), sr3));
-                    // snip->addSnippetInstruction(X86InstructionFactory64::emitRegImmMultReg(sr3, sizeof(BufferEntry), sr3));
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitRegImmMultReg(sr3, sizeof(BufferEntry), sr3));
                     // sr3 = shl 5 sr3 
-                    snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
+                    //snip->addSnippetInstruction(X86InstructionFactory64::emitShiftLeftLogical(logBase2(sizeof(BufferEntry)), sr3));
 
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
                     // sr3 holds the offset (in bytes) of the access
-
-                    ASSERT(memopIdInBlock < (bb->getNumberOfMemoryOps()+memopCountAdjust));
+                    printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d RepeatLoopIdx: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq,RepeatLoopIdx) ;
+                    ASSERT(memopIdInBlock < (bb->getNumberOfMemoryOps()));
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));
                     // sr2 now holds the base of this memop's buffer entry
@@ -612,15 +612,11 @@ void CacheSimulation::instrument(){
                     delete addrStore;
                     // sr3 holds the memory address being used by memop
                     // put the 4 elements of a BufferEntry into place
- 
-                    //loadstoreflag=(memop->isLoad());//(memop->isLoad());   
-                    //loadstoreflag=loadstoreflag<<1;   
-                    // printf("\n\t  loadstoreflag: %d ",loadstoreflag);            
-                    //loadstoreflag|= 0b10;
-                    //loadstoreflag|=(memop->isStore());
-                    //printf("\n\t memop->isLoad(): %d  memop->isStore(): %d loadstoreflag: %d",memop->isLoad(),memop->isStore(),loadstoreflag);
+
+
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
+                    printf("\t memopSeq: %ld bufferIdx: %d \n",memopSeq,bufferIdx);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
                     // this uses the value stored in the image key storage location
                     //snip->addSnippetInstruction(linkInstructionToData(X86InstructionFactory64::emitLoadRipImmReg(0, sr3), this, getInstDataAddress() + imageKey, false));

@@ -266,7 +266,7 @@ extern "C" {
   //  void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m, ReuseDistance* rd, ReuseDistance* sd, uint32_t numElements, image_key_t iid, thread_key_t tid)
     static void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m,uint32_t numElements, image_key_t iid, thread_key_t tid)
     {
-        inform<<"\t 1. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<ENDL;
+        //inform<<"\t 1. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<ENDL;
         uint32_t threadSeq = AllData->GetThreadSequence(tid);
         uint32_t numProcessed = 0;
 
@@ -274,7 +274,7 @@ extern "C" {
         //assert(faststats[0]->Stats[HandlerIdx]->Verify());
         uint32_t bufcur = 0;
         for (bufcur = 0; bufcur < numElements; bufcur++){
-            inform<<"\t 2. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
+            //inform<<"\t 2. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
             debug(assert(faststats[bufcur]));
             debug(assert(faststats[bufcur]->Stats));
 
@@ -291,10 +291,10 @@ extern "C" {
             // See the FIXME in DataManager::AddImage
             // skip processing the reference for now
             if (reference->threadid != tid){
-                inform<<"\t\t 2.1 ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
+                //inform<<"\t\t 2.1 ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
                 continue;
             }
-            inform<<"\t\t 3. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
+            //inform<<"\t\t 3. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
             m->Process((void*)ss, reference);
             numProcessed++; //assert(reference->threadid == tid);
         }
@@ -415,14 +415,10 @@ extern "C" {
         synchronize(AllData){
             if (isSampling){
                 BufferEntry* buffer = &(stats->Buffer[1]);
-
                 FastStats->Refresh(buffer, numElements, tid);
-                inform<<"\t ProcessThreadBuffer iid: "<<iid<<" tid "<<tid<<" CacheSimulation "<<CacheSimulation<<ENDL;            
+
                 if((CacheSimulation||AddressRangeEnable)){
-                    //sleep(10);
-                    inform<<"\t CacheSimulation "<<CacheSimulation<<" ----- AddressRangeEnable "<<AddressRangeEnable<<ENDL;
                     for (uint32_t i = 0; i < CountMemoryHandlers; i++){
-                        inform<<"\t i "<<i<<"\t --- "<<ENDL; //sleep(2);
                         MemoryStreamHandler* m = stats->Handlers[i];
                         ProcessBuffer(i, m, numElements, iid, tid);
                     }
@@ -552,7 +548,6 @@ extern "C" {
 
         AllData->SetTimer(iid, 1);
         SAVE_STREAM_FLAGS(cout);
-
 #ifdef MPI_INIT_REQUIRED
         if (!IsMpiValid()){
             warn << "Process " << dec << getpid() << " did not execute MPI_Init, will not print execution count files" << ENDL;
@@ -585,7 +580,6 @@ extern "C" {
         ofstream MemFile,RangeFile;
         string oFile;
         const char* fileName;
-
         if (ReuseWindow){
    
 	    ofstream ReuseDistFile;
@@ -637,7 +631,6 @@ extern "C" {
             }
             SpatialDistFile.close();
         }
-
        if(!(CacheSimulation || AddressRangeEnable))
         {    
                 double t = (AllData->GetTimer(*key, 1) - AllData->GetTimer(*key, 0)); 
@@ -2105,7 +2098,6 @@ CacheStructureHandler::CacheStructureHandler(CacheStructureHandler& h){
     description.assign(h.description);
     
      // HitStatus<<"\n\t SysID: "<<sysId<<" levelCount: "<<levelCount<<endl;
-    inform<<"\n\t SysID: "<<sysId<<" levelCount: "<<levelCount<<endl;
 #define LVLF(__i, __feature) (h.levels[__i])->Get ## __feature
 #define Extract_Level_Args(__i) LVLF(__i, Level()), LVLF(__i, SizeInBytes()), LVLF(__i, Associativity()), LVLF(__i, LineSize()), LVLF(__i, ReplacementPolicy())
     levels = new CacheLevel*[levelCount];
@@ -2346,17 +2338,17 @@ bool CacheLevel::GetDirtyStatus(uint32_t setid, uint32_t lineid,uint64_t store){
 }
 
 uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, uint64_t loadstoreflag,bool* AnyEvict, void* info){
-    inform<<"\t 1. CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
+    //inform<<"\t 1. CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
     uint32_t set = 0, lineInSet = 0;
     uint64_t store = GetStorage(addr);
     	
     debug(assert(stats));
     debug(assert(stats->Stats));
     debug(assert(stats->Stats[memid]));
-    inform<<"\t 2. CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
+    //inform<<"\t 2. CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
     if (Search(store, &set, &lineInSet)){
     	// hit
-        inform<<"\t 3.1 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
+        //inform<<"\t 3.1 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
         stats->Stats[memid][level].hitCount++;
 	    if(loadstoreflag)
 	    {
@@ -2370,17 +2362,11 @@ uint32_t CacheLevel::Process(CacheStats* stats, uint32_t memid, uint64_t addr, u
         MarkUsed(set, lineInSet);
         return INVALID_CACHE_LEVEL;
     }
-    inform<<"\t 0.2 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
-    assert(stats);
-    assert(stats->Stats);
-    assert(stats->Stats[memid]);
-     //->Stats[memid][level]);
-    inform<<"\t 1.2 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
-    exit(-1);
-    inform<<"\t 3.2 CacheLevel::Process "<<memid<<"\t addr "<<addr<<"\t missCount "<<(stats->Stats[memid][level].missCount)<<ENDL;
+    //inform<<"\t 0.2 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
     // miss
 
     stats->Stats[memid][level].missCount++;
+    //inform<<"\t 1.2 CacheLevel::Process "<<memid<<"\t addr "<<addr<<ENDL;
     Replace(store, set, LineToReplace(set),loadstoreflag);
     if(loadstoreflag)
     {
@@ -2547,7 +2533,6 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
 
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
-        inform<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq<<"\n";
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
     }
@@ -2586,7 +2571,6 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
 
       while (next < levelCount){
         //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
-        inform<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
     }
