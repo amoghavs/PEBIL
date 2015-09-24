@@ -22,7 +22,6 @@
 #define _Simulation_hpp_
 
 #include <string>
-#include <utility>
 #include <Metasim.hpp>
 
 using namespace std;
@@ -37,7 +36,6 @@ using namespace std;
 #define GIGA (MEGA*KILO)
 
 #define INVALID_CACHE_LEVEL (0xffffffff)
-#define INVALID_ADDRESS (0xffffffff)
 
 enum CacheLevelType {
     CacheLevelType_Undefined,
@@ -139,21 +137,15 @@ public:
     void Miss(uint32_t memid, uint32_t lvl, uint32_t cnt);
     void HybridMiss(uint32_t memid,uint32_t cnt);
 
-
     void Load(uint32_t memid,uint32_t lvl);
     void Load(uint32_t memid, uint32_t lvl, uint32_t cnt);
     void HybridLoad(uint32_t memid);
-    void HybridLoad(uint32_t memid,uint32_t cnt);
-//    void HybridLoads(uint32_t memid, uint32_t cnt);
-
-    
+    void HybridLoad(uint32_t memid,uint32_t cnt); //  void HybridLoads(uint32_t memid, uint32_t cnt);
+   
     void Store(uint32_t memid,uint32_t lvl);
     void Store(uint32_t memid, uint32_t lvl, uint32_t cnt);
     void HybridStore(uint32_t memid);
-    void HybridStore(uint32_t memid,uint32_t cnt);
-
-
-//    void HybridStores(uint32_t memid, uint32_t cnt);
+    void HybridStore(uint32_t memid,uint32_t cnt);//    void HybridStores(uint32_t memid, uint32_t cnt);
  
     uint64_t GetLoads(uint32_t memid, uint32_t lvl);
     uint64_t GetLoads(uint32_t lvl);
@@ -167,7 +159,7 @@ public:
     
     static float GetHitRate(LevelStats* stats);
     static float GetHitRate(uint64_t hits, uint64_t misses);
-    
+
     uint64_t GetHits(uint32_t memid, uint32_t lvl);
     uint64_t GetHybridHits(uint32_t memid);
 
@@ -188,7 +180,6 @@ public:
     bool Verify();
 };
 
- 
 struct AddressRange {
     uint64_t Minimum;
     uint64_t Maximum;
@@ -268,7 +259,6 @@ protected:
     history** historyUsed;
     bool toEvict;
 
-
 public:
     vector<uint64_t>* toEvictAddresses;
     CacheLevel();
@@ -345,8 +335,7 @@ public:
 
 class HighlyAssociativeCacheLevel : public virtual CacheLevel {
 protected:
-    //pair<uint32_t,bool> line;
-    pebil_map_type <uint64_t, pair<uint32_t,bool> >** fastcontents;
+    pebil_map_type <uint64_t, uint32_t>** fastcontents; //pair<uint32_t,bool> line;
 
 public:
     HighlyAssociativeCacheLevel() {}
@@ -459,7 +448,6 @@ public:
     void ExtractAddresses();
     CacheHybridStructureHandler(CacheHybridStructureHandler& h);
     void Process(void* stats, BufferEntry* access);
- 
 };
 
 #endif /* _Simulation_hpp_ */
