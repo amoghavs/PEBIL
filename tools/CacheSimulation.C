@@ -599,7 +599,8 @@ void CacheSimulation::instrument(){
                     // sr1 holds the thread data addr (which points to SimulationStats)
                     // sr2 holds the base address of the buffer 
                     // sr3 holds the offset (in bytes) of the access
-                    printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d RepeatLoopIdx: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq,RepeatLoopIdx) ;
+                    //printf("\n\t memopIdInBlock: %d bb->getNumberOfMemoryOps(): %d loadstoreflag: %d memopSeq: %d RepeatLoopIdx: %d ",memopIdInBlock,bb->getNumberOfMemoryOps(),loadstoreflag,memopSeq,RepeatLoopIdx) ;
+
                     ASSERT(memopIdInBlock < (bb->getNumberOfMemoryOps()));
                     uint32_t bufferIdx = 1 + memopIdInBlock - bb->getNumberOfMemoryOps();
                     snip->addSnippetInstruction(X86InstructionFactory64::emitLoadEffectiveAddress(sr2, sr3, 1, sizeof(BufferEntry) * bufferIdx, sr2, true, true));
@@ -613,10 +614,10 @@ void CacheSimulation::instrument(){
                     // sr3 holds the memory address being used by memop
                     // put the 4 elements of a BufferEntry into place
 
-
+                    printf("\n\t TargetAddress: 0x%llx  BaseAddress: 0x%012llx  getProgramAddress: 0x%012llx",memop->getTargetAddress(),memop->getBaseAddress(),memop->getProgramAddress());
+                    printf("\t memopSeq: %ld bufferIdx: %d \n",memopSeq,bufferIdx);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, address), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(memopSeq, sr3));
-                    printf("\t memopSeq: %ld bufferIdx: %d \n",memopSeq,bufferIdx);
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, memseq), true));   
                     // this uses the value stored in the image key storage location
                     //snip->addSnippetInstruction(linkInstructionToData(X86InstructionFactory64::emitLoadRipImmReg(0, sr3), this, getInstDataAddress() + imageKey, false));
@@ -626,6 +627,9 @@ void CacheSimulation::instrument(){
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, imageid), true));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(loadstoreflag, sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, loadstoreflag), true));                      
+                    uint64_t programAddress = memop->getProgramAddress();
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveImmToReg(programAddress, sr3));
+                    snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, programAddress), true));                                          
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveThreadIdToReg(sr3));
                     snip->addSnippetInstruction(X86InstructionFactory64::emitMoveRegToRegaddrImm(sr3, sr2, offsetof(BufferEntry, threadid), true));
 

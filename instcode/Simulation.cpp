@@ -266,7 +266,6 @@ extern "C" {
   //  void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m, ReuseDistance* rd, ReuseDistance* sd, uint32_t numElements, image_key_t iid, thread_key_t tid)
     static void ProcessBuffer(uint32_t HandlerIdx, MemoryStreamHandler* m,uint32_t numElements, image_key_t iid, thread_key_t tid)
     {
-        //inform<<"\t 1. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<ENDL;
         uint32_t threadSeq = AllData->GetThreadSequence(tid);
         uint32_t numProcessed = 0;
 
@@ -274,7 +273,6 @@ extern "C" {
         //assert(faststats[0]->Stats[HandlerIdx]->Verify());
         uint32_t bufcur = 0;
         for (bufcur = 0; bufcur < numElements; bufcur++){
-            //inform<<"\t 2. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
             debug(assert(faststats[bufcur]));
             debug(assert(faststats[bufcur]->Stats));
 
@@ -291,10 +289,8 @@ extern "C" {
             // See the FIXME in DataManager::AddImage
             // skip processing the reference for now
             if (reference->threadid != tid){
-                //inform<<"\t\t 2.1 ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
                 continue;
             }
-            //inform<<"\t\t 3. ProcessBuffer iid "<<iid<<"\t tid "<<tid<<"\t bufcur "<<bufcur<<ENDL;
             m->Process((void*)ss, reference);
             numProcessed++; //assert(reference->threadid == tid);
         }
@@ -2530,22 +2526,20 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     bool shouldEvictNextLevel=false;
     uint64_t loadstoreflag= access->loadstoreflag;
     bool AnyEvict=false;
+    uint32_t resLevel = 0;
 
       while (next < levelCount){
-        //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
+        resLevel = next;
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
-    }
+     }
+     inform<<"\t resLevel "<<resLevel<<ENDL;
 	
 	tmpNext=0;
-	if(AnyEvict)
-	{
+	if(AnyEvict){
 		tmpNext=0;
-		while( (tmpNext<levelCount) )
-		{
-			if(levels[tmpNext]->GetEvictStatus())
-			{
-			
+		while( (tmpNext<levelCount) ){
+			if(levels[tmpNext]->GetEvictStatus()){
 				levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
 			}
 			tmpNext++;
@@ -2570,16 +2564,13 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     bool AnyEvict=false;
 
       while (next < levelCount){
-        //HitStatus<<"\n\t 1. Presence check for address "<<victim<<" memseq: "<<access->memseq;
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
-    }
+      }
 	
-	if(AnyEvict)
-	{
+	if(AnyEvict){
 		tmpNext=0;
-		while( (tmpNext<levelCount) )
-		{
+		while( (tmpNext<levelCount) ){
 			if(levels[tmpNext]->GetEvictStatus())
 			{
 				levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
@@ -2588,14 +2579,12 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
 		}
 	}	
     	 
-    if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ) // Implies miss at LLC
-    {
+    if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ){ // Implies miss at LLC
     	CheckRange(stats,victim,access->loadstoreflag,access->memseq); 
     } 
 }
 
-void CacheHybridStructureHandler::ExtractAddresses()
-{
+void CacheHybridStructureHandler::ExtractAddresses(){
     stringstream tokenizer(description);
     int whichTok=0;
     string token;
@@ -2603,29 +2592,23 @@ void CacheHybridStructureHandler::ExtractAddresses()
     vector<uint64_t> End;
     int NumLevelsToken=1;
     int HybridAddressCount=0;
-    for ( ; tokenizer >> token; whichTok++)
-    {
+    for ( ; tokenizer >> token; whichTok++){
         // HitStatus<<"\n\t Token "<<token;
         uint64_t Dummy;
-    	if(whichTok>=(levelCount * 4+ (NumLevelsToken+1) ))
-	{
+    	if(whichTok>=(levelCount * 4+ (NumLevelsToken+1) )){
 		istringstream stream(token);
 		stream>>Dummy;
 		//cout<<dec<<Dummy;
-	    	if(Dummy<0x1)
-	    	{
+	    	if(Dummy<0x1){
 	    		ErrorExit("\n\t The boundary address of Cache structure: "<<sysId<<" token "<<token<<" is "<<Dummy<<" is not positive!! \n",MetasimError_StringParse);
 	    		//cout<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
 	    	}
-	    	else
-	    	{
-	    		if(HybridAddressCount%2==0)
-		    	{
+	    	else{
+	    		if(HybridAddressCount%2==0){
 		    		Start.push_back(Dummy);
 		    		//HitStatus<<"\n\t Hybrid-Start-Address: "<<Dummy;
 		    	}
-	    		else
-	    		{
+	    		else{
 	    			End.push_back(Dummy);
 		    		//HitStatus<<"\n\t Hybrid-End-Address: "<<Dummy;
 		    	}	    			
@@ -2634,39 +2617,27 @@ void CacheHybridStructureHandler::ExtractAddresses()
 	}
     }
     
-    if( (HybridAddressCount%2!=0) || (HybridAddressCount==0))
-    {
-    	//HitStatus<<"\n\t HybridAddressCount: "<<HybridAddressCount<<" is illegal!! ";
+    if( (HybridAddressCount%2!=0) || (HybridAddressCount==0)){
     	warn<<"\n\t NEED TO FEED THIS TO DEBUG/WARNING STREAMS ASAP.";
     	
     }
     
     AddressRangesCount=Start.size() ;// Should be equal to End.size()
-    
     RamAddressStart=(uint64_t*)malloc(AddressRangesCount*sizeof(uint64_t));
     RamAddressEnd=(uint64_t*)malloc(AddressRangesCount*sizeof(uint64_t));
-    //HitStatus<<"\n Boundary Address:  \n";
-    for(int AddCopy=0; AddCopy < AddressRangesCount ; AddCopy++)
-    {
-    	if(Start[AddCopy]<=End[AddCopy])
-    	{
+
+    for(int AddCopy=0; AddCopy < AddressRangesCount ; AddCopy++){
+    	if(Start[AddCopy]<=End[AddCopy]){
     		RamAddressStart[AddCopy]=Start[AddCopy];
     		RamAddressEnd[AddCopy]=End[AddCopy];
     	}
-    	else
-    	{
+    	else{
     		ErrorExit("\n\t Address range with start: "<<Start[AddCopy]<<" end: "<<End[AddCopy]<<" is illegal, starting address is smaller than ending address ",MetasimError_StringParse);
     	}
-    	//HitStatus<<"\n\t Pair: "<<AddCopy<<"\t start: "<<RamAddressStart[AddCopy]<<"\t end: "<<RamAddressEnd[AddCopy]<<"\n";
-    
     }
-    //HitStatus<<"\n\t HC status: "<<HybridCache;
-    //HitStatus<<"\n\t -- \n";
-    
 }
 
-CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHandler& h)
-{
+CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHandler& h){
     sysId = h.sysId;
     levelCount = h.levelCount;
     description.assign(h.description);
@@ -2710,28 +2681,20 @@ CacheHybridStructureHandler::CacheHybridStructureHandler(CacheHybridStructureHan
     }
 }
 
-bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uint64_t loadstoreflag, uint32_t memid)
-{
+bool CacheHybridStructureHandler::CheckRange(CacheStats* stats,uint64_t addr,uint64_t loadstoreflag, uint32_t memid){
 	bool AddressNotFound= true; 
-	for(int CurrRange=0 ; (CurrRange < AddressRangesCount) && AddressNotFound ; CurrRange++)
-	{
-		if( ( addr > RamAddressStart[CurrRange] ) && (addr <= RamAddressEnd[CurrRange] ) )
-		{
-			//hits+=1;
+	for(int CurrRange=0 ; (CurrRange < AddressRangesCount) && AddressNotFound ; CurrRange++){
+		if( ( addr > RamAddressStart[CurrRange] ) && (addr <= RamAddressEnd[CurrRange] ) ){
 			AddressNotFound= false;
-			stats->HybridMemStats[memid].hitCount++; //=1;
+			stats->HybridMemStats[memid].hitCount++; 
 			if(loadstoreflag)
 				stats->HybridMemStats[memid].loadCount++;
 			else
 				stats->HybridMemStats[memid].storeCount++;
 		}
-	
 	}
-	if(AddressNotFound)
-	{
-		//misses+=1;
-		stats->HybridMemStats[memid].missCount++; //=1;
-			//HitStatus<<"\n\t In Check-range for address:"<<addr<<" and its a miss!! \n";		
+	if(AddressNotFound){
+		stats->HybridMemStats[memid].missCount++; 	
 	}
 	return true; // CAUTION: No known use of returning 'bool'!! 
 
