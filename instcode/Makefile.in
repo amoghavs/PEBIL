@@ -35,7 +35,7 @@ AR          = ar rcs
 REUSE_LIBS  = -L../external/ReuseDistance -lReuseDistance
 REUSE_MIC_LIBS  = -L../external/ReuseDistanceForMIC -lReuseDistance
 EXTRA_LIBS  =
-EXTRA_INC   = -I../instcode -I../external/ReuseDistance
+EXTRA_INC   = -I../instcode -I../external/ReuseDistance -I/opt/Adamant
 
 COMMON_OBJS = $(LIBDIR)/InstrumentationCommon.o
 COMMON_OBJS_MIC = $(MICLIBDIR)/InstrumentationCommon.o

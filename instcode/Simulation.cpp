@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <string.h>
 #include <assert.h>
+ #include <adm.h>
 
 // AVS: Flow tracing//fstream HitStatus; 
 
@@ -87,6 +88,30 @@ static MemoryStreamHandler** MemoryHandlers = NULL;
 
 static ReuseDistance** ReuseDistanceHandlers = NULL;
 
+void adm_events_v(const adm_event_t* event, const uint32_t events_num){
+      uint32_t bufcur = 0;
+      for(bufcur=0;bufcur<events_num;bufcur++){
+          uint32_t source = 0;
+          if(event[bufcur].source&PERF_MEM_OP_STORE)
+            source+=10;
+          else if((event[bufcur].source&PERF_MEM_OP_LOAD))//==0)
+            source+=20;
+          //inform<<"\t bufcur "<<bufcur<<"\t mem-address"<<event[bufcur].address<<"\t source "<<source<<"\t";
+
+          if(event[bufcur].source&(PERF_MEM_LVL_HIT<<PERF_MEM_LVL_SHIFT)) {
+            if(event[bufcur].source&(PERF_MEM_LVL_L2<<PERF_MEM_LVL_SHIFT))
+              ++source;
+            else if(event[bufcur].source&(PERF_MEM_LVL_L3<<PERF_MEM_LVL_SHIFT))
+              source+=2;
+            else if(event[bufcur].source&(PERF_MEM_LVL_LOC_RAM<<PERF_MEM_LVL_SHIFT))
+              source+=3;
+            else if((event[bufcur].source&(PERF_MEM_LVL_L1<<PERF_MEM_LVL_SHIFT))==0)
+                source+=4;
+             // goto unknown_event;
+            //inform<<"\t  source "<<source<<ENDL;
+          }
+      }
+}
 
 #define synchronize(__locker) __locker->Lock(); for (bool __s = true; __s == true; __locker->UnLock(), __s = false) 
 
@@ -239,7 +264,6 @@ extern "C" {
             debug(inform << "Removing init points for image " << hex << (*key) << ENDL);
             SetDynamicPoints(inits, false); 
 
-
         }
 
         pthread_mutex_unlock(&image_init_mutex);
@@ -268,10 +292,13 @@ extern "C" {
     {
         uint32_t threadSeq = AllData->GetThreadSequence(tid);
         uint32_t numProcessed = 0;
+        uint32_t* resCacheProcess = new uint32_t[numElements];
+        adm_event_t* tempAdmEvents = new adm_event_t[numElements];
 
         SimulationStats** faststats = FastStats->GetBufferStats(tid);
+
         //assert(faststats[0]->Stats[HandlerIdx]->Verify());
-        uint32_t bufcur = 0;
+        uint32_t bufcur = 0; uint32_t resCur = 0;
         for (bufcur = 0; bufcur < numElements; bufcur++){
             debug(assert(faststats[bufcur]));
             debug(assert(faststats[bufcur]->Stats));
@@ -291,10 +318,60 @@ extern "C" {
             if (reference->threadid != tid){
                 continue;
             }
-            m->Process((void*)ss, reference);
+            resCur=m->Process((void*)ss, reference);
+            resCacheProcess[bufcur] = resCur;
             numProcessed++; //assert(reference->threadid == tid);
+
+        }  
+
+        uint64_t source =0;
+        for(bufcur = 0; bufcur < numElements; bufcur++){
+            debug(assert(faststats[bufcur]));
+            debug(assert(faststats[bufcur]->Stats));
+            SimulationStats* stats = faststats[bufcur];
+            StreamStats* ss = stats->Stats[HandlerIdx];
+            BufferEntry* reference = BUFFER_ENTRY(stats, bufcur);
+
+            if (reference->imageid == 0){
+                debug(assert(AllData->CountThreads() > 1));
+                continue;
+            }
+            // This happens when uninitialized threads make their way into instrumented code.  // See the FIXME in DataManager::AddImage  // skip processing the reference for now
+            if (reference->threadid != tid){
+                continue;
+            }
+            source =0;
+            if(reference->loadstoreflag)
+                source |= PERF_MEM_OP_LOAD;
+            else
+                source |= PERF_MEM_OP_STORE;
+
+            source |= PERF_MEM_LVL_HIT  << PERF_MEM_LVL_SHIFT;
+            if(resCacheProcess[bufcur]==0)  
+                source |= PERF_MEM_LVL_L1 << PERF_MEM_LVL_SHIFT;
+            else if(resCacheProcess[bufcur]==1)
+                source |= PERF_MEM_LVL_L2 << PERF_MEM_LVL_SHIFT;
+            else if(resCacheProcess[bufcur]==2){
+                inform<<"\t 2. source "<<hex<<source;
+                source |= PERF_MEM_LVL_L3 << PERF_MEM_LVL_SHIFT;
+                inform<<"\t 3. source "<<hex<<source;
+            }
+            else //if(resCacheProcess[bufcur]==(m->getlevelCount()+1))
+                source |= PERF_MEM_LVL_LOC_RAM << PERF_MEM_LVL_SHIFT;
+
+            tempAdmEvents[bufcur].ip= reference->programAddress;
+            tempAdmEvents[bufcur].tid= reference->threadid;
+            tempAdmEvents[bufcur].source= source; 
+            tempAdmEvents[bufcur].address = reference->address;
+
+            //inform<<"\t bufcur "<<bufcur<<"\t source "<<source<<"\t address "<<(reference->address)<<"\t program address "<<(reference->programAddress)<<"\t loadstoreflag "<<(reference->loadstoreflag)<<"\t level "<<(resCacheProcess[bufcur])<<ENDL;
         }
+         adm_events_v(tempAdmEvents, numElements);
+
+         delete[] tempAdmEvents;
+         delete[] resCacheProcess;
         //assert(faststats[0]->Stats[HandlerIdx]->Verify());
+        //exit(-1);
     }
 
     static void ProcessReuseBuffer(ReuseDistance* rd,uint32_t numElements, image_key_t iid, thread_key_t tid)
@@ -1331,7 +1408,7 @@ void AddressRangeHandler::Print(ofstream& f){
     f << "AddressRangeHandler" << ENDL;
 }
 
-void AddressRangeHandler::Process(void* stats, BufferEntry* access){
+uint32_t AddressRangeHandler::Process(void* stats, BufferEntry* access){
     uint32_t memid = (uint32_t)access->memseq;
     uint64_t addr = access->address;
     RangeStats* rs = (RangeStats*)stats;
@@ -2498,7 +2575,7 @@ void CacheLevel::EvictDirty(CacheStats* stats,CacheLevel** levels,uint32_t memid
 	   	uint64_t loadstoreflag=0;
 	   	while( next<  GetLevelCount() )
 	   	{
-	   		   		//stats->Stats[memid][next].loadCount++; // THis is because previous process call for 'victim' must have resulted in a miss at 'level+1', hence the following process method should be 'load'
+	   		//stats->Stats[memid][next].loadCount++; // THis is because previous process call for 'victim' must have resulted in a miss at 'level+1', hence the following process method should be 'load'
 		   	next=levels[next]->EvictProcess(stats,memid,victim,loadstoreflag,(void*)info);   
 		   	loadstoreflag=1; // Similar logic followed in CSH::Process()
 	   	}
@@ -2513,7 +2590,7 @@ bool CacheLevel::GetEvictStatus()
 	return toEvict;
 }
 
-void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
+uint32_t CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
     uint32_t next = 0;
     uint64_t victim = access->address;
 
@@ -2533,22 +2610,24 @@ void CacheStructureHandler::Process(void* stats_in, BufferEntry* access){
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
      }
-     inform<<"\t resLevel "<<resLevel<<ENDL;
 	
-	tmpNext=0;
-	if(AnyEvict){
-		tmpNext=0;
-		while( (tmpNext<levelCount) ){
-			if(levels[tmpNext]->GetEvictStatus()){
-				levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
-			}
-			tmpNext++;
-		}
-    	}
-     
+    tmpNext=0;
+    if(AnyEvict){
+        tmpNext=0;
+        while( (tmpNext<levelCount) ){
+            if(levels[tmpNext]->GetEvictStatus()){
+                levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
+            }
+            tmpNext++;
+        }
+    } 
+     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) )
+        resLevel = levelCount + 1 ;
+    return resLevel;
+
 }
 
-void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
+uint32_t CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
  
     uint32_t next = 0;
     uint64_t victim = access->address;
@@ -2562,26 +2641,29 @@ void CacheHybridStructureHandler::Process(void* stats_in, BufferEntry* access){
     bool shouldEvictNextLevel=false;
     uint64_t loadstoreflag= access->loadstoreflag;
     bool AnyEvict=false;
+    uint32_t resLevel = 0;
 
       while (next < levelCount){
+        resLevel = next;
         next = levels[next]->Process(stats, access->memseq, victim,loadstoreflag,&AnyEvict,(void*)(&evictInfo));
         loadstoreflag=1; // If next level is checked, then it should be a miss from current level, which implies next operation is a load to a next level!!
       }
 	
-	if(AnyEvict){
-		tmpNext=0;
-		while( (tmpNext<levelCount) ){
-			if(levels[tmpNext]->GetEvictStatus())
-			{
-				levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
-			}
-			tmpNext++;
-		}
-	}	
+    if(AnyEvict){
+        tmpNext=0;
+        while( (tmpNext<levelCount) ){
+            if(levels[tmpNext]->GetEvictStatus()){
+                levels[tmpNext]->EvictDirty(stats, levels,access->memseq,(void*)(&evictInfo));
+            }
+            tmpNext++;
+        }
+    }	
     	 
     if( (next!=INVALID_CACHE_LEVEL) && (next>=levelCount) ){ // Implies miss at LLC
-    	CheckRange(stats,victim,access->loadstoreflag,access->memseq); 
+        CheckRange(stats,victim,access->loadstoreflag,access->memseq); 
+        resLevel = levelCount+1;
     } 
+    return resLevel;
 }
 
 void CacheHybridStructureHandler::ExtractAddresses(){

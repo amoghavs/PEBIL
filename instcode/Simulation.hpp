@@ -389,7 +389,7 @@ public:
     ~MemoryStreamHandler();
 
     virtual void Print(ofstream& f) = 0;
-    virtual void Process(void* stats, BufferEntry* access) = 0;
+    virtual uint32_t Process(void* stats, BufferEntry* access) = 0;
     virtual bool Verify() = 0;
     bool Lock();
     bool UnLock();
@@ -405,7 +405,7 @@ public:
     ~AddressRangeHandler();
 
     void Print(ofstream& f);
-    void Process(void* stats, BufferEntry* access);
+    uint32_t Process(void* stats, BufferEntry* access);
     bool Verify() { return true; }
 };
 
@@ -427,7 +427,8 @@ public:
     bool Init(string desc);
 
     void Print(ofstream& f);
-    void Process(void* stats, BufferEntry* access);
+    uint32_t getLevelCount(){ return levelCount;};
+    uint32_t Process(void* stats, BufferEntry* access);
     bool Verify();
 };
 
@@ -447,7 +448,7 @@ public:
     bool CheckRange(CacheStats* stats,uint64_t addr,uint64_t loadstoreflag,uint32_t memid); //, uint32_t* set, uint32_t* lineInSet);	
     void ExtractAddresses();
     CacheHybridStructureHandler(CacheHybridStructureHandler& h);
-    void Process(void* stats, BufferEntry* access);
+    uint32_t Process(void* stats, BufferEntry* access);
 };
 
 #endif /* _Simulation_hpp_ */
